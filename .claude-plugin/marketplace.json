@@ -1,0 +1,15 @@
+{
+  "name": "paddle-agent-skills",
+  "description": "Paddle's marketplace of Claude Code plugins.",
+  "owner": {
+    "name": "Paddle",
+    "email": "team-dx@paddle.com"
+  },
+  "plugins": [
+    {
+      "name": "paddle",
+      "source": "./",
+      "description": "Paddle Billing skills and MCP servers for Claude Code."
+    }
+  ]
+}
