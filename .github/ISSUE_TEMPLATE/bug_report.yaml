@@ -17,8 +17,8 @@ body:
     id: skill
     attributes:
       label: Which skill?
-      description: Name of the skill the bug relates to (e.g. the directory name under `skills/`).
-      placeholder: e.g. paddle-checkout
+      description: Name of the skill the bug relates to (the `name` from its `SKILL.md` frontmatter).
+      placeholder: e.g. paddle-checkout-web
     validations:
       required: true
   - type: input
