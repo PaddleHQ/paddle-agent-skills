@@ -10,3 +10,6 @@
 # Local env files
 .env*.local
 *.pem
+
+# Node
+node_modules/

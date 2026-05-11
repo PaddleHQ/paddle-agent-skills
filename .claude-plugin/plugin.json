@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "paddle",
+  "description": "Paddle Billing skills and MCP servers for Claude Code.",
+  "author": {
+    "name": "Paddle",
+    "email": "team-dx@paddle.com",
+    "url": "https://www.paddle.com"
+  },
+  "homepage": "https://developer.paddle.com/sdks/ai/agent-skills",
+  "repository": "https://github.com/PaddleHQ/paddle-agent-skills",
+  "license": "Apache-2.0",
+  "keywords": ["paddle", "billing", "payments", "subscriptions", "saas"]
+}
