@@ -1,0 +1,16 @@
+---
+description: Conventions for Paddle integration code
+globs: ["**/*.ts", "**/*.tsx", "**/*.py", "**/*.go", "**/*.php"]
+alwaysApply: true
+---
+
+# Paddle integration rules
+
+When writing or modifying code that integrates with Paddle:
+
+- Always check current Paddle documentation via the paddle-docs MCP server before suggesting code. Do not rely on training data — the API and SDK evolve frequently.
+- Prefer the official Paddle SDK for the language in use (paddle-node-sdk, paddle-python-sdk, paddle-go-sdk, paddle-php-sdk) over raw HTTP calls.
+- All development uses the sandbox environment. Sandbox API keys contain `_sdbx`; sandbox client-side tokens are prefixed with `test_`.
+- Always verify webhook signatures before acting on the payload. In Node, use `paddle.webhooks.unmarshal()`. In Python, use `Verifier().verify()`. In Go, use `paddle.NewWebhookVerifier()`. In PHP, use `(new Verifier())->verify()`.
+- For destructive account changes (updating prices, archiving products), ask for explicit confirmation before calling the Paddle MCP server.
+- Use environment variables for API keys and webhook secrets. Never inline credentials into code.

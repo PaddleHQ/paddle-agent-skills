@@ -1,0 +1,19 @@
+{
+  "name": "paddle-agent-skills",
+  "owner": {
+    "name": "Paddle",
+    "email": "team-dx@paddle.com"
+  },
+  "metadata": {
+    "description": "Paddle's marketplace of Cursor plugins."
+  },
+  "plugins": [
+    {
+      "name": "paddle",
+      "source": "./",
+      "description": "Paddle Billing skills and MCP servers for Cursor.",
+      "category": "integrations",
+      "tags": ["paddle", "billing", "saas"]
+    }
+  ]
+}
