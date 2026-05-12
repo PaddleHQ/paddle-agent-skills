@@ -38,7 +38,7 @@ Then ask Claude something Paddle-shaped, like "help me verify a Paddle webhook i
 
 To update later, run `/plugin marketplace update paddle-agent-skills`.
 
-## Use the skills outside Claude Code or Cursor
+## Use the skills outside Claude Code
 
 Skills also work in any agentic tool that supports the agent-skills format. Use the [`skills` CLI](https://github.com/vercel-labs/agent-skills) to add them to your project:
 
