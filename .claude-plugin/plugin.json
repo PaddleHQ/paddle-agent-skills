@@ -7,7 +7,7 @@
     "email": "team-dx@paddle.com",
     "url": "https://www.paddle.com"
   },
-  "homepage": "https://developer.paddle.com/sdks/ai/agent-skills",
+  "homepage": "https://developer.paddle.com/get-started/ai/claude-code/",
   "repository": "https://github.com/PaddleHQ/paddle-agent-skills",
   "license": "Apache-2.0",
   "keywords": ["paddle", "billing", "payments", "subscriptions", "saas"]
