@@ -1,0 +1,15 @@
+{
+  "name": "paddle",
+  "description": "Paddle Billing skills and MCP servers for Cursor.",
+  "author": {
+    "name": "Paddle",
+    "email": "team-dx@paddle.com",
+    "url": "https://www.paddle.com"
+  },
+  "homepage": "https://developer.paddle.com/get-started/ai/cursor/",
+  "repository": "https://github.com/PaddleHQ/paddle-agent-skills",
+  "license": "Apache-2.0",
+  "keywords": ["paddle", "billing", "payments", "subscriptions", "saas"],
+  "logo": "./assets/paddle-logo.svg",
+  "mcpServers": "./.mcp.json"
+}
