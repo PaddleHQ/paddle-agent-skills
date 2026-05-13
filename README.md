@@ -38,6 +38,45 @@ Then ask Claude something Paddle-shaped, like "help me verify a Paddle webhook i
 
 To update later, run `/plugin marketplace update paddle-agent-skills`.
 
+### Connect the Paddle MCP servers
+
+The plugin also wires up the [Paddle MCP server](https://developer.paddle.com/sdks/ai/paddle-mcp), which lets the agent call the Paddle API directly to do things like create products and prices, mint client-side tokens, and simulate webhooks. Several skills (`paddle-catalog-setup`, `paddle-checkout-web`, `paddle-sandbox-testing`, `paddle-subscription-sync`, `paddle-webhooks`) lean on it.
+
+Paddle has an endpoint for each environment and the plugin wires both, so the agent can work in either or port state from one to the other (for example, recreating a sandbox catalog in live).
+
+| MCP server | URL | API key env var |
+| --- | --- | --- |
+| `paddle-live` | `https://mcp.paddle.com/mcp` | `PADDLE_LIVE_API_KEY` |
+| `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | `PADDLE_SANDBOX_API_KEY` |
+
+You only need to set the key(s) for the environment(s) you use. The unset one will fail to authenticate at editor startup and Claude Code logs the failure but otherwise carries on. The skills default to sandbox unless you've explicitly opted into live, so `PADDLE_SANDBOX_API_KEY` is the one to start with during development.
+
+#### 1. Get a Paddle API key
+
+Generate keys at **Paddle > Developer tools > Authentication**:
+
+- Sandbox: [sandbox dashboard](https://sandbox-vendors.paddle.com/authentication-v2) (keys prefixed `pdl_sdbx_`)
+- Live: [live dashboard](https://vendors.paddle.com/authentication-v2)
+
+Grant the permissions you want the agent to use.
+
+#### 2. Export the keys in your shell
+
+The plugin reads the keys from the process environment of whatever launches your editor. Set them in your shell profile:
+
+```sh
+export PADDLE_SANDBOX_API_KEY=pdl_sdbx_...
+export PADDLE_LIVE_API_KEY=...  # only if you also want the live MCP
+```
+
+See [`.env.example`](./.env.example) for the full list of variables and inline guidance.
+
+> Restart your editor after setting the variables so the MCP servers pick them up.
+
+#### Picking the right MCP at runtime
+
+With both servers connected, the agent sees two parallel toolsets. Be explicit in your prompts about which environment you mean. For example, "create a product in sandbox" routes to `paddle-sandbox`; "create the equivalent product in live" routes to `paddle-live`. Sandbox keys only authenticate against the sandbox URL and live keys only against the live URL, so a mismatch surfaces as an auth failure.
+
 ## Use the skills outside Claude Code
 
 Skills also work in any agentic tool that supports the agent-skills format. Use the [`skills` CLI](https://github.com/vercel-labs/agent-skills) to add them to your project:
@@ -67,4 +106,5 @@ For feedback about Paddle's developer experience or these skills specifically, c
 - [Paddle developer docs](https://developer.paddle.com/?utm_source=dx&utm_medium=paddle-agent-skills)
 - [Paddle agent skills](https://developer.paddle.com/sdks/ai/agent-skills?utm_source=dx&utm_medium=paddle-agent-skills)
 - [Paddle docs MCP server](https://developer.paddle.com/sdks/ai/docs-mcp?utm_source=dx&utm_medium=paddle-agent-skills)
+- [Paddle MCP server](https://developer.paddle.com/sdks/ai/paddle-mcp?utm_source=dx&utm_medium=paddle-agent-skills)
 - [Sign up for Paddle Billing](https://login.paddle.com/signup?utm_source=dx&utm_medium=paddle-agent-skills)
