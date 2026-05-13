@@ -32,7 +32,9 @@ NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=test_...   # client-side token, safe to expose
 NEXT_PUBLIC_PADDLE_ENV=sandbox             # or "production"
 ```
 
-If the Paddle MCP server is available to you, you can also use `create_client_side_token` to provision the token programmatically rather than asking the user to copy it from the dashboard.
+If a Paddle MCP server is available to you, call `client.clientTokens.create({ name: "Frontend dev token" })` inside an `execute` to provision the token programmatically rather than asking the user to copy it from the dashboard. Note `clientTokens` is camelCase.
+
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
 
 Install the client library:
 

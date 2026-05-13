@@ -21,8 +21,8 @@ Before creating anything, agree on these with the user. **Do not guess.**
   - One product can have many prices — typically one per billing interval.
   - Prices can have price overrides for different markets.
 - **Tax category** (per product). Pick from the table below. Default to `saas` for software-as-a-service or `standard` for everything else, and surface the choice after creating for the user to confirm. Users must get approval for other tax categories in the dashboard.
-- **Billing model** (per price). Recurring (subscription) requires a `billingCycle` (e.g. `month` / `year`); one-time omits it. Trial periods are subscription-only — the API rejects them on one-time prices.
-- **Currency and amounts.** `unitPrice.amount` is a string in lowest currency units. Cents for USD/EUR/GBP (`"1000"` = $10.00). **Whole units for the zero-decimal currencies — JPY, KRW, and CLP** (`"1200"` = ¥1,200 / ₩1,200 / CLP$1,200, not ¥12 etc.). CLP has historical centavos but Paddle treats it as zero-decimal for everyday transactions.
+- **Billing model** (per price). Recurring (subscription) requires a billing cycle (e.g. `month` / `year`) — `billing_cycle` in MCP body params, `billingCycle` in the SDK; one-time prices omit it. Trial periods are subscription-only — the API rejects them on one-time prices.
+- **Currency and amounts.** The unit price amount (`unit_price.amount` in MCP, `unitPrice.amount` in the SDK) is a string in lowest currency units. Cents for USD/EUR/GBP (`"1000"` = $10.00). **Whole units for the zero-decimal currencies — JPY, KRW, and CLP** (`"1200"` = ¥1,200 / ₩1,200 / CLP$1,200, not ¥12 etc.). CLP has historical centavos but Paddle treats it as zero-decimal for everyday transactions.
 - **Environment.** Default to **sandbox** during development. Sandbox and production are completely separate — `pro_...` and `pri_...` IDs from one don't exist in the other. Ask the user before targeting production.
 
 IDs look like `pro_01h...` (products) and `pri_01h...` (prices). You'll need the price IDs to wire into the user's app, so capture them after creation.
@@ -44,36 +44,74 @@ IDs look like `pro_01h...` (products) and `pri_01h...` (prices). You'll need the
 
 Pick the highest-ranked method that's available to you:
 
-1. **Paddle MCP server** — if `create_product` and `create_price` tools are in your toolset, use them directly. Fastest, no code, results immediate. **Always prefer this.**
+1. **Paddle MCP server** — if `search` and `execute` tools from a `paddle-sandbox` (or `paddle-live`) MCP server are in your toolset, use them. Fastest, no code for the user to run, results immediate. **Always prefer this.**
 2. **Node SDK seed script** — if MCP isn't available but the user has a `PADDLE_API_KEY` (or can generate one), generate a seed script for the user to run. Repeatable, version-controlled.
 3. **Dashboard (manual)** — if neither is workable, dictate click-by-click steps for the user to follow.
 
 If a method fails midway (e.g. SDK call returns `forbidden` because the API key lacks permissions), fall back to the next method rather than retrying.
 
-If the user doesn't have the Paddle MCP server installed, surface it as a suggestion — point them at the [Paddle MCP server install guide](https://developer.paddle.com/sdks/ai/paddle-mcp.md).
+If the user doesn't have a Paddle MCP server installed, surface it as a suggestion — point them at the [Paddle MCP server install guide](https://developer.paddle.com/sdks/ai/paddle-mcp.md).
 
 ## Method 1: Paddle MCP server
 
-Check whether `create_product`, `create_price`, and `list_prices` tools are available to you. If yes:
+Check whether `search` and `execute` tools from `paddle-sandbox` (or `paddle-live`) are available to you. If yes, use them.
 
-1. Confirm the product details with the user (name, tax category).
-2. Call `create_product` with `name`, `taxCategory`, optional `description`. Capture the returned `id`.
-3. For each price, call `create_price` with `productId` (from step 2), `description`, `unitPrice` (`{ amount, currencyCode }`), and `billingCycle` for recurring. Capture each `id`.
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
+
+Default to `paddle-sandbox` unless the user has explicitly asked to target live.
+
+1. Confirm the product details with the user (name, tax category, prices to create).
+2. Call `search` with a query like `"products create"` and `"prices create"` to confirm the current method names and parameter shapes.
+3. Call `execute` with one async function that creates the product and all its prices in a single call. Chaining inside one `execute` avoids round-trips and keeps related operations atomic.
 4. Report all created IDs back to the user — they'll need to paste them into their app.
 
-For trials, add `trialPeriod: { interval: "day", frequency: 14 }` on the price.
+Example `execute` payload — one product, monthly + yearly prices, monthly with a trial:
 
-For regional pricing, add `unitPriceOverrides`:
-
+```js
+async (client) => {
+  const product = await client.products.create({
+    name: "Pro",
+    tax_category: "saas",
+    description: "For scaling teams.",
+  });
+  const monthly = await client.prices.create({
+    product_id: product.id,
+    description: "Pro monthly USD",
+    unit_price: { amount: "1000", currency_code: "USD" },
+    billing_cycle: { interval: "month", frequency: 1 },
+    trial_period: { interval: "day", frequency: 14 },
+  });
+  const yearly = await client.prices.create({
+    product_id: product.id,
+    description: "Pro yearly USD",
+    unit_price: { amount: "9600", currency_code: "USD" },
+    billing_cycle: { interval: "year", frequency: 1 },
+  });
+  return { product_id: product.id, monthly_id: monthly.id, yearly_id: yearly.id };
+}
 ```
-unitPriceOverrides: [
-  { countryCodes: ["DE", "FR", "IT", "ES", "NL"], unitPrice: { amount: "900", currencyCode: "EUR" } },
-  { countryCodes: ["GB"], unitPrice: { amount: "800", currencyCode: "GBP" } },
-  { countryCodes: ["JP"], unitPrice: { amount: "1200", currencyCode: "JPY" } }
+
+For a one-time price (lifetime license, etc.), drop `billing_cycle` and `trial_period`:
+
+```js
+const lifetime = await client.prices.create({
+  product_id: product.id,
+  description: "Pro lifetime",
+  unit_price: { amount: "29900", currency_code: "USD" },
+});
+```
+
+For regional pricing, add `unit_price_overrides` — all snake_case, including the inner field names:
+
+```js
+unit_price_overrides: [
+  { country_codes: ["DE", "FR", "IT", "ES", "NL"], unit_price: { amount: "900", currency_code: "EUR" } },
+  { country_codes: ["GB"], unit_price: { amount: "800", currency_code: "GBP" } },
+  { country_codes: ["JP"], unit_price: { amount: "1200", currency_code: "JPY" } },
 ]
 ```
 
-If the MCP tools aren't available — the tool roster doesn't include `create_product` — fall back to Method 2.
+If the MCP `search` / `execute` tools aren't available, fall back to Method 2.
 
 ## Method 2: Node SDK seed script
 
@@ -179,19 +217,21 @@ After the user shares the IDs, update their app config (constants file, env vars
 
 Whichever method you used, before declaring this skill complete:
 
-1. **Confirm the products and prices exist.** Via MCP (`list_products`, `list_prices`), via SDK (`paddle.products.list()`, `paddle.prices.list()`), or by asking the user to check **Paddle > Catalog > Products** in the dashboard.
-2. **Confirm the IDs you reported match.** Run a `get_product` / `paddle.products.get(id)` for each new product and check name + tax category.
+1. **Confirm the products and prices exist.** Via MCP — one `execute` call: `client.products.list({ include: ["prices"] })`. Via SDK: `paddle.products.list({ include: "prices" })`. Or ask the user to check **Paddle > Catalog > Products** in the dashboard.
+2. **Confirm the IDs you reported match.** Via MCP: `client.products.get(productId, { include: ["prices"] })` for each new product (note `productId` is a positional path param). Via SDK: `paddle.products.get(id)`. Check name + tax category.
 3. **Suggest the next step.** Recommend the user complete `checkout-web` next, using one of the new price IDs, to confirm the catalog actually works in checkout.
 
 ## Common pitfalls
 
-- **Creating in the wrong environment.** Sandbox and production have completely separate catalogs. Always confirm `--environment` (MCP) or `Environment.sandbox` vs `Environment.production` (SDK) matches what the user wants.
-- **Confusing amount units.** `unitPrice.amount` is a string in lowest currency units. `"1000"` is $10.00, **not** $1000. The zero-decimal currencies (JPY, KRW, CLP) are whole units — `"1200"` is ¥1,200 / ₩1,200 / CLP$1,200, not ¥12 etc.
-- **Forgetting `productId` on a price.** `create_price` / `paddle.prices.create()` requires the parent product's ID. Create the product first, capture its `id`, then pass to each price.
-- **Trial period on a one-time price.** Not allowed — trials are subscription-only. The API rejects it. Drop `trialPeriod` if `billingCycle` isn't set.
-- **Recurring price with no `billingCycle`.** Without it, the price is created as one-time. Always set `billingCycle: { interval: "month", frequency: 1 }` (or similar) for subscriptions.
+- **Creating in the wrong environment.** Sandbox and production have completely separate catalogs. With the remote MCP, the server name plus API key determines the environment — `paddle-sandbox` + a `pdl_sdbx_...` key for sandbox, `paddle-live` + a live key for production. With the SDK, `Environment.sandbox` vs `Environment.production`. Always confirm before creating.
+- **Confusing amount units.** `unit_price.amount` (MCP) / `unitPrice.amount` (SDK) is a string in lowest currency units. `"1000"` is $10.00, **not** $1000. The zero-decimal currencies (JPY, KRW, CLP) are whole units — `"1200"` is ¥1,200 / ₩1,200 / CLP$1,200, not ¥12 etc.
+- **Forgetting the product ID on a price.** `client.prices.create()` (MCP) and `paddle.prices.create()` (SDK) both require the parent product's ID — `product_id` in MCP body params, `productId` in SDK. Create the product first, capture its `id`, then pass to each price.
+- **Trial period on a one-time price.** Not allowed — trials are subscription-only. The API rejects it. Drop `trial_period` (MCP) / `trialPeriod` (SDK) if there's no billing cycle.
+- **Recurring price with no billing cycle.** Without `billing_cycle` (MCP) / `billingCycle` (SDK), the price is created as one-time. Always set `{ interval: "month", frequency: 1 }` (or similar) for subscriptions.
+- **Mixing camelCase and snake_case in MCP `execute` code.** Method paths are camelCase (`client.clientTokens.create`, `client.pricingPreview.preview`), but body params and response fields are snake_case (`tax_category`, `product_id`, `unit_price`, `currency_code`). The SDK is camelCase end-to-end — don't carry that convention into `execute` code, and don't carry the snake_case convention back into SDK code.
+- **Splitting dependent calls across multiple `execute` invocations.** Variables don't persist between `execute` calls, so passing IDs requires returning them and re-passing on the next call. Chain dependent operations (product → prices → overrides) inside one async function and return the IDs at the end.
 - **Using regional overrides without a sensible base price.** Customers in countries you didn't override see the base price auto-converted. Pick a base currency that's a reasonable fallback.
-- **MCP tools scope set too narrow.** If the user installed with `--tools=read-only`, `create_product` won't be available. Ask them to widen to `non-destructive` (or `all`).
+- **API key missing write scopes.** The remote MCP inherits permissions from the API key it's authenticated with. If `client.products.create()` returns `forbidden`, the key lacks `product.write` / `price.write` — ask the user to regenerate it from **Paddle > Developer tools > Authentication** with those scopes added.
 - **Pasting IDs into the user's code without telling them.** Always report new IDs back; let the user (or you, with their approval) commit the change explicitly.
 
 ## Related docs
@@ -201,4 +241,3 @@ Whichever method you used, before declaring this skill complete:
 - [Products API reference](https://developer.paddle.com/api-reference/products/overview.md)
 - [Prices API reference](https://developer.paddle.com/api-reference/prices/overview.md)
 - [Paddle MCP server install guide](https://developer.paddle.com/sdks/ai/paddle-mcp.md)
-- [Paddle MCP server on GitHub](https://github.com/PaddleHQ/paddle-mcp-server)

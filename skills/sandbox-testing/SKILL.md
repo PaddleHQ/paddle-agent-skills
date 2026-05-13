@@ -87,7 +87,23 @@ The simulator lets you fire **fake-but-correctly-signed** webhook events at your
 - `subscription_renewed` — fires `subscription.updated`, `transaction.created`, `transaction.updated`, `transaction.completed`, `transaction.paid`.
 - `subscription_canceled` — fires `subscription.updated` (with `scheduled_change`), then `subscription.canceled` after a delay.
 
-Find the simulator at **Paddle > Developer tools > Simulations**. If the Paddle MCP server is available to you, you can drive the simulator programmatically with `create_simulation` and `create_simulation_run` instead of using the dashboard.
+Find the simulator at **Paddle > Developer tools > Simulations**. If a Paddle MCP server is available to you, you can drive the simulator programmatically inside one `execute` call instead of using the dashboard — create the simulation, then create a run against it:
+
+```js
+async (client) => {
+  const sim = await client.simulations.create({
+    name: "Subscription created flow",
+    type: "subscription_created",
+    notification_setting_id: "ntfset_...",
+  });
+  const run = await client.simulations.runs.create(sim.id, {});
+  return { simulation_id: sim.id, run_id: run.id };
+}
+```
+
+Note `client.simulations.runs.create` is nested under `simulations` (not a top-level `client.simulationRuns`), and the simulation ID is a positional path param.
+
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
 
 To use the simulator:
 

@@ -9,8 +9,10 @@ alwaysApply: true
 When writing or modifying code that integrates with Paddle:
 
 - Always check current Paddle documentation via the paddle-docs MCP server before suggesting code. Do not rely on training data — the API and SDK evolve frequently.
+- When calling the Paddle API MCP (`paddle-sandbox` or `paddle-live`), always run `search` before `execute` to confirm method names and parameter shapes. Don't infer from SDK knowledge — the SDK is camelCase end-to-end, but the MCP uses **camelCase method paths** (`client.clientTokens.create`) with **snake_case body params and response fields** (`tax_category`, `product_id`, `unit_price`).
+- Default to `paddle-sandbox` for development. Only use `paddle-live` after the user has explicitly opted into operating on real data.
 - Prefer the official Paddle SDK for the language in use (paddle-node-sdk, paddle-python-sdk, paddle-go-sdk, paddle-php-sdk) over raw HTTP calls.
 - All development uses the sandbox environment. Sandbox API keys contain `_sdbx`; sandbox client-side tokens are prefixed with `test_`.
 - Always verify webhook signatures before acting on the payload. In Node, use `paddle.webhooks.unmarshal()`. In Python, use `Verifier().verify()`. In Go, use `paddle.NewWebhookVerifier()`. In PHP, use `(new Verifier())->verify()`.
-- For destructive account changes (updating prices, archiving products), ask for explicit confirmation before calling the Paddle MCP server.
+- For destructive account changes (updating prices, archiving products), ask for explicit confirmation before calling destructive operations via `execute`, especially on `paddle-live`.
 - Use environment variables for API keys and webhook secrets. Never inline credentials into code.
