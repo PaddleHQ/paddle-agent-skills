@@ -23,7 +23,9 @@ Every design choice in this skill follows from these facts about how Paddle deli
 - **Retry schedule.** Sandbox: 3 attempts over ~15 minutes. Live: 60 attempts over ~3 days, exponential backoff (~60s × `attempt^1.1`). Connection timeouts count toward the same budget as non-2xx responses.
 - **Same `event.eventId` on every retry.** Paddle re-sends the identical payload (modulo a fresh signature timestamp) until you 2xx or the retry budget is exhausted. That id is your dedup key.
 - **No redirect following.** A `301` or `302` is treated as a failed delivery, not followed.
-- **After the retry budget is exhausted, the event is gone.** You can replay manually from the dashboard's notification log, or via the `replay_notification` MCP tool. Plan for this when bringing an endpoint back from extended downtime — query the API for current state rather than waiting for events.
+- **After the retry budget is exhausted, the event is gone.** You can replay manually from the dashboard's notification log, or via the Paddle MCP server with `client.notifications.replay(notificationId)` inside an `execute` call (note: `notificationId` is a positional path param, not a body field). Plan for this when bringing an endpoint back from extended downtime — query the API for current state rather than waiting for events.
+
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
 
 ## Prerequisites
 
@@ -49,7 +51,7 @@ npm install @paddle/paddle-node-sdk
 
 A notification destination tells Paddle "send these events to this URL." Each destination has its own secret — sandbox and production should be separate destinations with separate secrets, never shared.
 
-1. In the Paddle dashboard, go to **Paddle > Developer tools > Notifications**. (Or, if the Paddle MCP server is available to you, use `create_notification_setting` to create the destination programmatically — skip the dashboard steps below.)
+1. In the Paddle dashboard, go to **Paddle > Developer tools > Notifications**. (Or, if a Paddle MCP server is available to you, call `client.notificationSettings.create({ destination: "https://...", subscribed_events: [...], type: "url" })` inside an `execute` to create the destination programmatically — skip the dashboard steps below. CamelCase resource, snake_case body. See conventions above.)
 2. Click **New destination**.
 3. Set:
    - **Description**: `Local dev` (or `Production`).
@@ -299,7 +301,7 @@ See `sandbox-testing` for the full sandbox + simulator workflow.
 3. In the dashboard, go to **Paddle > Developer tools > Simulations** and run a `subscription.created` simulation against your destination.
 4. Confirm:
    - The route handler logs the event type.
-   - The dashboard shows a 200 response under **Paddle > Developer tools > Notifications > [your destination] > Logs**. (If MCP is available, `list_notification_logs` returns the same.)
+   - The dashboard shows a 200 response under **Paddle > Developer tools > Notifications > [your destination] > Logs**. (If a Paddle MCP server is available, `client.notifications.logs.list(notificationSettingId, { per_page: 50 })` returns the same — note the path is nested under `notifications`, not a top-level resource, and `notificationSettingId` is a positional path param.)
 5. Deliberately tamper with the secret in `.env.local` and re-simulate. Confirm:
    - The handler returns 500.
    - The dashboard log shows the failed delivery and a queued retry.

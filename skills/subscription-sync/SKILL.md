@@ -244,7 +244,28 @@ Use the Paddle API only for **mutations**: cancel, pause, resume, upgrade, refun
 
 ## Initial backfill
 
-Adding subscription sync to an existing app (with existing Paddle data) means you need to backfill before relying on the mirror. If the Paddle MCP server is available to you, `list_customers` and `list_subscriptions` will paginate through everything; otherwise use a one-shot SDK script:
+Adding subscription sync to an existing app (with existing Paddle data) means you need to backfill before relying on the mirror.
+
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
+
+If a Paddle MCP server is available to you, paginate explicitly inside one `execute` call:
+
+```js
+async (client) => {
+  const customers = [];
+  let after;
+  do {
+    const page = await client.customers.list({ after, per_page: 200 });
+    customers.push(...page.data);
+    after = page.pagination.hasMore ? page.data.at(-1).id : undefined;
+  } while (after);
+  return customers;
+}
+```
+
+**The 50-call cap matters here.** With `per_page: 200` that's a ceiling of ~10,000 customers per `execute` invocation. If the user's account fits in one execute, this is fine. If not, split across multiple `execute` calls — pass the last seen ID back in as the starting `after` cursor each time — or fall back to the SDK script below, which has no such cap.
+
+Otherwise (or for larger backfills), use a one-shot SDK script:
 
 ```ts
 // scripts/backfill-paddle.ts

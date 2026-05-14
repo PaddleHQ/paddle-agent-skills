@@ -17,7 +17,9 @@ You _could_ hardcode "$10/month" in your UI, but comes with very strong regional
 
 `PricePreview()` returns the correct price for a given country, with currency, formatting, and applicable tax already calculated. The string it gives you is what the user will be charged — no client-side math.
 
-If the Paddle MCP server is available to you, the `preview_prices` tool returns the same data server-side — useful for verifying what users will see in different countries before wiring up the client-side hook.
+If a Paddle MCP server is available to you, call `client.pricingPreview.preview({ items: [{ price_id: "pri_...", quantity: 1 }], address: { country_code: "US" }, currency_code: "USD" })` inside an `execute` to get the same data server-side — useful for verifying what users will see in different countries before wiring up the client-side hook. Note `pricingPreview` is camelCase, but `country_code` and `currency_code` are snake_case.
+
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
 
 ## Prerequisites
 

@@ -8,7 +8,9 @@
 .vscode
 
 # Local env files
-.env*.local
+.env
+.env.*
+!.env.example
 *.pem
 
 # Node
