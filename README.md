@@ -25,7 +25,7 @@ Each skill lives in its own directory under [`skills/`](skills) and ships with a
 
 ## Install as a Claude Code plugin
 
-The fastest way to use these skills inside [Claude Code](https://claude.com/claude-code) is to install them as a plugin. The plugin also wires up the [Paddle docs MCP server](https://developer.paddle.com/sdks/ai/docs-mcp), so the agent can pull from the latest Paddle docs while it works.
+The fastest way to use these skills inside [Claude Code](https://claude.com/claude-code) is to install them as a plugin. The plugin also wires up the [Paddle docs MCP server](https://developer.paddle.com/sdks/ai/docs-mcp) and [Paddle MCP servers](https://developer.paddle.com/sdks/ai/paddle-mcp).
 
 Inside Claude Code, run:
 
@@ -44,9 +44,9 @@ The plugin also wires up the [Paddle MCP server](https://developer.paddle.com/sd
 
 Paddle has an endpoint for each environment and the plugin wires both, so the agent can work in either or port state from one to the other (for example, recreating a sandbox catalog in live).
 
-| MCP server | URL | API key env var |
-| --- | --- | --- |
-| `paddle-live` | `https://mcp.paddle.com/mcp` | `PADDLE_LIVE_API_KEY` |
+| MCP server       | URL                                  | API key env var          |
+| ---------------- | ------------------------------------ | ------------------------ |
+| `paddle-live`    | `https://mcp.paddle.com/mcp`         | `PADDLE_LIVE_API_KEY`    |
 | `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | `PADDLE_SANDBOX_API_KEY` |
 
 You only need to set the key(s) for the environment(s) you use. The unset one will fail to authenticate at editor startup and Claude Code logs the failure but otherwise carries on. The skills default to sandbox unless you've explicitly opted into live, so `PADDLE_SANDBOX_API_KEY` is the one to start with during development.
@@ -77,7 +77,21 @@ See [`.env.example`](./.env.example) for the full list of variables and inline g
 
 With both servers connected, the agent sees two parallel toolsets. Be explicit in your prompts about which environment you mean. For example, "create a product in sandbox" routes to `paddle-sandbox`; "create the equivalent product in live" routes to `paddle-live`. Sandbox keys only authenticate against the sandbox URL and live keys only against the live URL, so a mismatch surfaces as an auth failure.
 
-## Use the skills outside Claude Code
+## Install as a Codex plugin
+
+If you're using [Codex](https://developers.openai.com/codex), you can install the plugin from the Codex plugin directory. As with the Claude Code plugin, it also wires up the [docs MCP server](https://developer.paddle.com/sdks/ai/docs-mcp) and [Paddle MCP servers](https://developer.paddle.com/sdks/ai/paddle-mcp).
+
+From your terminal, run:
+
+```sh
+codex plugin marketplace add PaddleHQ/paddle-agent-skills
+```
+
+Then install the `paddle` plugin from the Codex plugin directory.
+
+After, follow the instructions in the [Connect the Paddle MCP servers](#connect-the-paddle-mcp-servers) section above to set up the Paddle MCP servers.
+
+## Use the skills outside Claude Code or Codex
 
 Skills also work in any agentic tool that supports the agent-skills format. Use the [`skills` CLI](https://github.com/vercel-labs/agent-skills) to add them to your project:
 

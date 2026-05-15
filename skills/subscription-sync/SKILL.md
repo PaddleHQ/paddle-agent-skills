@@ -260,7 +260,7 @@ async (client) => {
     after = page.pagination.hasMore ? page.data.at(-1).id : undefined;
   } while (after);
   return customers;
-}
+};
 ```
 
 **The 50-call cap matters here.** With `per_page: 200` that's a ceiling of ~10,000 customers per `execute` invocation. If the user's account fits in one execute, this is fine. If not, split across multiple `execute` calls — pass the last seen ID back in as the starting `after` cursor each time — or fall back to the SDK script below, which has no such cap.
