@@ -98,7 +98,7 @@ async (client) => {
   });
   const run = await client.simulations.runs.create(sim.id, {});
   return { simulation_id: sim.id, run_id: run.id };
-}
+};
 ```
 
 Note `client.simulations.runs.create` is nested under `simulations` (not a top-level `client.simulationRuns`), and the simulation ID is a positional path param.

@@ -44,9 +44,9 @@ The plugin also wires up the [Paddle MCP server](https://developer.paddle.com/sd
 
 Paddle has an endpoint for each environment and the plugin wires both, so the agent can work in either or port state from one to the other (for example, recreating a sandbox catalog in live).
 
-| MCP server | URL | API key env var |
-| --- | --- | --- |
-| `paddle-live` | `https://mcp.paddle.com/mcp` | `PADDLE_LIVE_API_KEY` |
+| MCP server       | URL                                  | API key env var          |
+| ---------------- | ------------------------------------ | ------------------------ |
+| `paddle-live`    | `https://mcp.paddle.com/mcp`         | `PADDLE_LIVE_API_KEY`    |
 | `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | `PADDLE_SANDBOX_API_KEY` |
 
 You only need to set the key(s) for the environment(s) you use. The unset one will fail to authenticate at editor startup and Claude Code logs the failure but otherwise carries on. The skills default to sandbox unless you've explicitly opted into live, so `PADDLE_SANDBOX_API_KEY` is the one to start with during development.

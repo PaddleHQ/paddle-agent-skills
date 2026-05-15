@@ -88,7 +88,7 @@ async (client) => {
     billing_cycle: { interval: "year", frequency: 1 },
   });
   return { product_id: product.id, monthly_id: monthly.id, yearly_id: yearly.id };
-}
+};
 ```
 
 For a one-time price (lifetime license, etc.), drop `billing_cycle` and `trial_period`:
@@ -105,10 +105,13 @@ For regional pricing, add `unit_price_overrides` — all snake_case, including t
 
 ```js
 unit_price_overrides: [
-  { country_codes: ["DE", "FR", "IT", "ES", "NL"], unit_price: { amount: "900", currency_code: "EUR" } },
+  {
+    country_codes: ["DE", "FR", "IT", "ES", "NL"],
+    unit_price: { amount: "900", currency_code: "EUR" },
+  },
   { country_codes: ["GB"], unit_price: { amount: "800", currency_code: "GBP" } },
   { country_codes: ["JP"], unit_price: { amount: "1200", currency_code: "JPY" } },
-]
+];
 ```
 
 If the MCP `search` / `execute` tools aren't available, fall back to Method 2.
