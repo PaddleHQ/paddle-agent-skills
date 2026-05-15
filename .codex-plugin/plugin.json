@@ -1,0 +1,30 @@
+{
+  "name": "paddle",
+  "version": "0.1.0",
+  "description": "Paddle Billing skills and MCP servers for Codex.",
+  "author": {
+    "name": "Paddle",
+    "email": "team-dx@paddle.com",
+    "url": "https://www.paddle.com"
+  },
+  "homepage": "https://developer.paddle.com/get-started/ai/codex/",
+  "repository": "https://github.com/PaddleHQ/paddle-agent-skills",
+  "license": "Apache-2.0",
+  "keywords": ["paddle", "billing", "payments", "subscriptions", "saas"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Paddle",
+    "shortDescription": "Paddle Billing skills and MCP servers",
+    "longDescription": "Paddle Billing is the developer-first merchant of record for modern SaaS, AI, mobile app, and digital product businesses. This plugin bundles agent skills for the most common Paddle integration tasks (checkout, webhooks, subscription sync, customer portal, sandbox testing) and wires up the Paddle docs and API MCP servers so Codex can pull from the latest Paddle docs and act in your sandbox or live account.",
+    "developerName": "Paddle",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://www.paddle.com",
+    "privacyPolicyURL": "https://www.paddle.com/legal/privacy",
+    "termsOfServiceURL": "https://www.paddle.com/legal/terms",
+    "brandColor": "#0E1414",
+    "composerIcon": "./assets/paddle-logo.svg",
+    "logo": "./assets/paddle-logo.svg"
+  }
+}
