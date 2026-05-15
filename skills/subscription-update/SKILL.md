@@ -1,18 +1,13 @@
 ---
 name: paddle-subscription-update
-description: Change a Paddle subscription's plan from a Next.js Server Action — auth, ownership check, `prorationBillingMode`, items-array replace semantics, preview-before-commit, and `on_payment_failure` handling.
+description: "Use when the user needs to upgrade, downgrade, or switch a Paddle subscription plan from a Next.js Server Action. Covers auth, ownership check, prorationBillingMode selection, items-array replace semantics, preview-before-commit, and onPaymentFailure handling."
 ---
 
 # Update a Paddle subscription's plan from Next.js
 
 ## When to use this skill
 
-Use this skill when building "Upgrade plan," "Switch tier," or "Change subscription" actions in your authenticated user's billing UI. It covers a Next.js 15 (App Router) Server Action that calls `paddle.subscriptions.update()`, the four `prorationBillingMode` choices and when to pick each, the _replace not append_ semantics of the items array, and the security checks every plan-change action needs.
-
-This is the _initiating_ side of subscription changes. Pair it with:
-
-- `subscription-sync` — your webhook handler will get a `subscription.updated` event after the change. Your DB mirror picks up the new plan, status, and pricing.
-- `subscription-cancel` — same auth/ownership shape; if you're building both, share the helpers.
+Use when building "Upgrade plan," "Switch tier," or "Change subscription" actions in an authenticated billing UI. This is the _initiating_ side of subscription changes — pair with `subscription-sync` (webhook handler for `subscription.updated`) and `subscription-cancel` (shares the same auth/ownership shape).
 
 ## Prerequisites
 
@@ -208,17 +203,11 @@ The Node SDK uses camelCase (`onPaymentFailure`); the wire format is `on_payment
 
 ## Common pitfalls
 
-- **Wrong `prorationBillingMode`.** The defaults table is the heart of this skill. `do_not_bill` for a self-serve upgrade is a billing-accounting hole; `full_immediately` overcharges; `prorated_next_billing_period` surprises users who expected a charge. For "Upgrade to Pro" UX, **always `prorated_immediately`**.
-- **Appending instead of replacing items.** Pulling `subscription.items` from the mirror, concatenating the new item, and sending the combined array results in a subscription billed for two plans. The endpoint replaces — pass only what you want.
-- **No ownership check.** Same as `subscription-cancel`: trusting the `subscriptionId` input lets any authenticated user upgrade any subscription's plan.
 - **No auth check.** Server Actions are callable from anywhere — anonymous, scripted, or via direct POST. Always verify the session.
-- **Optimistic UI based on the action's return.** The action returning `{ success: true }` means Paddle accepted the change request. It does NOT mean the prorated charge succeeded. Wait for `transaction.completed` (via webhook) before granting features that depend on payment success.
+- **No ownership check.** Trusting the `subscriptionId` input lets any authenticated user upgrade any subscription's plan. Always verify the caller owns the subscription.
+- **Optimistic UI based on the action's return.** `{ success: true }` means Paddle accepted the change request, NOT that the prorated charge succeeded. Wait for `transaction.completed` (via webhook) before granting features that depend on payment success.
 - **Missing `revalidatePath`.** UI shows the old plan until manual refresh.
-- **Returning the raw `Subscription`.** Same as cancel — the SDK's instance is large; slim it.
-- **Skipping the preview step on a non-trivial change.** For term changes especially, the prorated calculation isn't obvious — Paddle may credit existing balances, apply tax, or convert currency in ways your back-of-envelope estimate misses. Showing the user a confirm screen with the actual numbers from `previewUpdate` before they commit avoids "wait, why was I charged this much?" tickets. Skip the preview only when the price impact is small and obvious.
-- **Not knowing `onPaymentFailure` exists.** The default (`prevent_change`) is correct for self-serve and you don't need to override it. The trap is _not realizing the option exists_ when you have a flow where you do need `apply_change` — e.g. a CS rep upgrading a customer with a temporarily-failing card. If you don't know the field is there, you'll work around the limitation in clumsier ways.
-- **Mixed billing intervals on items.** If you sell tier + addons and let users switch between monthly and annual, the addons must move with the tier. Submitting `[{ priceId: 'pri_pro_annual' }, { priceId: 'pri_addon_monthly' }]` will fail — Paddle rejects mixed-interval `items` arrays. When designing your "switch term" flow, plan for swapping addon price IDs alongside the tier.
-- **Treating downgrade like upgrade.** `prorated_immediately` on a Pro → Starter switch issues a prorated refund mid-period — most apps don't want that for a "downgrade" UX. Use `prorated_next_billing_period` so the change applies at renewal without refunding.
+- **Returning the raw `Subscription`.** The SDK's instance is large; slim it to only the fields you need.
 
 ## Verify the integration
 
