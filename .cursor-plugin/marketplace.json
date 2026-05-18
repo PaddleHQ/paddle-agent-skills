@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "paddle",
-      "source": "./",
+      "source": "./providers/cursor/plugin/",
       "description": "Paddle Billing skills and MCP servers for Cursor.",
       "category": "integrations",
       "tags": ["paddle", "billing", "saas"]
