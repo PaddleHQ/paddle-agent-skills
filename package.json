@@ -1,7 +1,7 @@
 {
   "name": "paddle-agent-skills",
   "private": true,
-  "description": "Paddle agent skills for Claude Code, Cursor, and other agent-skills-compatible tools.",
+  "description": "Paddle agent skills for Claude Code, Cursor, Codex, Gemini CLI, and other agent-skills-compatible tools.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/PaddleHQ/paddle-agent-skills.git"
@@ -9,7 +9,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "format": "prettier --write \"**/*.{md,json,yml,yaml}\"",
-    "format:check": "prettier --check \"**/*.{md,json,yml,yaml}\""
+    "format:check": "prettier --check \"**/*.{md,json,yml,yaml}\"",
+    "sync-skills": "node scripts/sync-skills.mjs"
   },
   "devDependencies": {
     "prettier": "^3.8.3"
