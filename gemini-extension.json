@@ -1,0 +1,21 @@
+{
+  "name": "paddle",
+  "version": "0.1.0",
+  "mcpServers": {
+    "paddle-docs": {
+      "httpUrl": "https://paddlehq.mcp.kapa.ai"
+    },
+    "paddle-live": {
+      "httpUrl": "https://mcp.paddle.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${PADDLE_LIVE_API_KEY}"
+      }
+    },
+    "paddle-sandbox": {
+      "httpUrl": "https://sandbox-mcp.paddle.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${PADDLE_SANDBOX_API_KEY}"
+      }
+    }
+  }
+}

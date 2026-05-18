@@ -8,7 +8,7 @@
       "name": "paddle",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./providers/codex/plugin"
       },
       "policy": {
         "installation": "AVAILABLE",

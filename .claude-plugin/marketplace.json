@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "paddle",
-      "source": "./",
+      "source": "./providers/claude/plugin/",
       "description": "Paddle Billing skills and MCP servers for Claude Code."
     }
   ]
