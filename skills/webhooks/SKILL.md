@@ -19,7 +19,7 @@ This skill is the foundation for almost every server-side Paddle integration. Pa
 
 Every design choice in this skill follows from these facts about how Paddle delivers webhooks. Read this section first; everything else is mechanics.
 
-- **Only `2xx` within 5 seconds is "delivered."** Any other response — `400`, `401`, `500`, `503`, a redirect, a connection timeout — is treated as a failed delivery and gets retried. There is no status code that means "stop retrying" on the integrator side. Paddle's notification-service hard-codes `200–299` as the success window; everything outside that triggers the retry path.
+- **Only `2xx` within 5 seconds is "delivered."** Any other response — `400`, `401`, `500`, `503`, a redirect, a connection timeout — is treated as a failed delivery and gets retried. There is no status code that means "stop retrying" on the integrator side. Paddle retries any non-2xx response.
 - **Retry schedule.** Sandbox: 3 attempts over ~15 minutes. Live: 60 attempts over ~3 days, exponential backoff (~60s × `attempt^1.1`). Connection timeouts count toward the same budget as non-2xx responses.
 - **Same `event.eventId` on every retry.** Paddle re-sends the identical payload (modulo a fresh signature timestamp) until you 2xx or the retry budget is exhausted. That id is your dedup key.
 - **No redirect following.** A `301` or `302` is treated as a failed delivery, not followed.
@@ -82,7 +82,7 @@ export function getPaddleInstance() {
 
 ## Step 3: Write the Route Handler
 
-Two rules. Pre-validate inputs you can check cheaply (return `400`). Wrap everything else in a single try/catch that returns `500` on any throw — including signature failures.
+Two rules. Pre-validate inputs you can check cheaply (return `400`). Wrap everything else in a single try/catch that returns a non-2xx on any throw — including signature failures — so Paddle retries. Any non-2xx works (this skill uses `500`; `401` is equally valid); the only response that loses the event is a `2xx`.
 
 ```ts
 // app/api/webhook/route.ts
@@ -115,10 +115,11 @@ export async function POST(request: NextRequest) {
     return Response.json({ received: true });
   } catch (e) {
     console.error("Webhook error:", e);
-    // 500: Paddle treats any non-2xx as a retry. We want that here.
-    // A thrown unmarshal could be a tampered request OR a rotated secret
-    // that hasn't been redeployed — they're indistinguishable. Retrying
-    // recovers the second case automatically; the first is harmless.
+    // Any non-2xx tells Paddle to retry — 401 and 500 are equally fine here;
+    // only a 2xx would mark the event delivered and lose it. A thrown
+    // unmarshal could be a tampered request OR a rotated secret that hasn't
+    // been redeployed — they're indistinguishable, so retrying recovers the
+    // second case automatically and the first is harmless. We return 500.
     return Response.json({ error: "Internal error" }, { status: 500 });
   }
 }
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
 2. Throws if the signature is invalid, the timestamp is too old, or the payload is malformed.
 3. Returns a typed `EventEntity` with the deserialized payload.
 
-Why a single catch returning 500, even for signature failures? See the comment in the code: a thrown `unmarshal` doesn't tell you _why_ it threw. If you split the catch and return `401` on signature failures, a routine secret rotation silently drops every event until someone notices. `500` + retry covers tampered, rotated, expired, and malformed alike.
+Why a single catch returning one non-2xx, even for signature failures? A thrown `unmarshal` doesn't tell you _why_ it threw — a tampered request, a wrong/rotated secret, an expired timestamp, and a malformed event all surface as the same generic error. Every non-2xx is retried on the same budget, so `401` and `500` are equally event-safe: a rotated secret recovers automatically once you redeploy, whichever you pick. Don't try to split them (`401` for "forged", `500` for "transient") — you can't tell those cases apart, so choose one non-2xx and use it for the whole catch. The only choice that loses events is returning `2xx` on a failure.
 
 ## Step 4: Route the event to handlers
 
@@ -247,7 +248,7 @@ Use the ledger only when UPSERT-shaping doesn't cover the side effect. For most 
 
 ## Step 6: Acknowledge fast — queue heavy work
 
-The 5-second timeout is real. If your handler takes longer, Paddle's notification-service treats it as a connection timeout, marks the delivery `TIMED_OUT`, and counts the attempt against your retry budget.
+The 5-second timeout is real. If your handler takes longer, Paddle treats it as a connection timeout, marks the delivery as timed out, and counts the attempt against your retry budget.
 
 Pattern:
 
@@ -284,8 +285,8 @@ See `sandbox-testing` for the full sandbox + simulator workflow.
 
 ## Common pitfalls
 
-- **Returning anything but 2xx to "stop retries."** Paddle's notification-service treats every non-2xx response as a failed delivery — including `401`. There is no 4xx code that means "stop trying" from the integrator side. Returning `401` on a signature failure means a rotated secret silently drops events for 3 days. Always return `500` from the catch around `unmarshal`. If you have actual abuse to fend off, do it at the edge with rate limits, not inside the handler.
-- **Splitting the catch into "signature failure" and "handler error."** Sophisticated engineers reach for `401` on tampered requests and `500` on handler throws. Don't. `unmarshal` throws indistinguishably for a tampered request, a wrong/rotated secret, an expired timestamp, and a malformed event. One catch, one `500`, one operational story.
+- **Returning `2xx` on a failed verification.** This is the one status mistake that loses events: Paddle considers only 2xx responses as delivered, so a `2xx` on a failed `unmarshal` marks the event delivered and it's never retried. Every non-2xx — `400`, `401`, `500`, `503` — is retried on the same budget, so returning `401` on a signature failure does **not** lose events (a rotated secret still gets the full retry window to recover). The only status that stops retries from the integrator side is `2xx`. If you have actual abuse to fend off, do it at the edge with rate limits, not inside the handler.
+- **Splitting the catch into "signature failure → 401" and "handler error → 500."** `unmarshal` throws indistinguishably for a tampered request, a wrong/rotated secret, an expired timestamp, and a malformed event, so the split is illusory — you can't actually tell which case you're in. Pick one non-2xx and use it for the whole catch. One catch, one status, one operational story.
 - **Parsing the body before verification.** If you read JSON with `request.json()`, then re-serialize to verify, the byte sequence won't match what Paddle signed. Always use `await request.text()` and pass the raw string to `unmarshal()`.
 - **Wrong secret.** Each notification destination has its own secret. Mixing the sandbox secret with a production destination (or vice versa) results in `unmarshal` throwing on every delivery. `PADDLE_NOTIFICATION_WEBHOOK_SECRET` must match the destination you're targeting — and is _not_ the same value as `PADDLE_API_KEY`.
 - **Slow handlers.** 30 seconds of work in the route handler will time out at 5 seconds, count as a failed delivery, and burn a retry attempt. Verify, queue, ack.
@@ -303,7 +304,7 @@ See `sandbox-testing` for the full sandbox + simulator workflow.
    - The route handler logs the event type.
    - The dashboard shows a 200 response under **Paddle > Developer tools > Notifications > [your destination] > Logs**. (If a Paddle MCP server is available, `client.notifications.logs.list(notificationSettingId, { per_page: 50 })` returns the same — note the path is nested under `notifications`, not a top-level resource, and `notificationSettingId` is a positional path param.)
 5. Deliberately tamper with the secret in `.env.local` and re-simulate. Confirm:
-   - The handler returns 500.
+   - The handler returns a non-2xx (this skill's handler returns 500).
    - The dashboard log shows the failed delivery and a queued retry.
    - Restore the correct secret afterwards — Paddle will retry the failed delivery and it should succeed.
 6. Trigger a real flow: complete a sandbox checkout (see `checkout-web`) and confirm the resulting `transaction.completed` and `subscription.created` events arrive.
