@@ -226,7 +226,7 @@ Whichever method you used, before declaring this skill complete:
 
 ## Common pitfalls
 
-- **Creating in the wrong environment.** Sandbox and production have completely separate catalogs. With the remote MCP, the server name plus API key determines the environment — `paddle-sandbox` + a `pdl_sdbx_...` key for sandbox, `paddle-live` + a live key for production. With the SDK, `Environment.sandbox` vs `Environment.production`. Always confirm before creating.
+- **Creating in the wrong environment.** Sandbox and production have completely separate catalogs. With the remote MCP, the server name determines the environment — `paddle-sandbox` for sandbox, `paddle-live` for production. With the SDK, `Environment.sandbox` vs `Environment.production`. Always confirm before creating.
 - **Confusing amount units.** `unit_price.amount` (MCP) / `unitPrice.amount` (SDK) is a string in lowest currency units. `"1000"` is $10.00, **not** $1000. The zero-decimal currencies (JPY, KRW, CLP) are whole units — `"1200"` is ¥1,200 / ₩1,200 / CLP$1,200, not ¥12 etc.
 - **Forgetting the product ID on a price.** `client.prices.create()` (MCP) and `paddle.prices.create()` (SDK) both require the parent product's ID — `product_id` in MCP body params, `productId` in SDK. Create the product first, capture its `id`, then pass to each price.
 - **Trial period on a one-time price.** Not allowed — trials are subscription-only. The API rejects it. Drop `trial_period` (MCP) / `trialPeriod` (SDK) if there's no billing cycle.

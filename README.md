@@ -68,41 +68,21 @@ Gemini auto-discovers the bundled [`skills/`](skills) directory at the extension
 
 ## Connect the Paddle MCP servers
 
-All of the plugins wire up the same three MCP servers. They share configuration through environment variables, so set the keys once and any of the four agents can use them.
+All of the plugins wire up the same three MCP servers:
 
-| MCP server       | URL                                  | API key env var          |
-| ---------------- | ------------------------------------ | ------------------------ |
-| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | _(no key required)_      |
-| `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | `PADDLE_SANDBOX_API_KEY` |
-| `paddle-live`    | `https://mcp.paddle.com/mcp`         | `PADDLE_LIVE_API_KEY`    |
+| MCP server       | URL                                  | Authentication                    |
+| ---------------- | ------------------------------------ | --------------------------------- |
+| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | None                              |
+| `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | OAuth (authorize in your browser) |
+| `paddle-live`    | `https://mcp.paddle.com/mcp`         | OAuth (authorize in your browser) |
 
-You only need to set the keys for the environments you use. The unset one will fail to authenticate at editor startup and the agent logs the failure but otherwise carries on. The skills default to sandbox unless you've explicitly opted into live, so `PADDLE_SANDBOX_API_KEY` is the one to start with during development.
+The first time your agent uses `paddle-sandbox` or `paddle-live`, it opens your browser to authorize with Paddle (OAuth 2.1) — no API keys to generate, export, or rotate. Approve the connection and the agent can use the MCP tools. The connection has access to whatever your Paddle user's role permits, and you may be asked to re-authorize from time to time.
 
-### 1. Get a Paddle API key
-
-Generate keys at **Paddle > Developer tools > Authentication**:
-
-- Sandbox: [sandbox dashboard](https://sandbox-vendors.paddle.com/authentication-v2) (keys prefixed `pdl_sdbx_`)
-- Live: [live dashboard](https://vendors.paddle.com/authentication-v2)
-
-Grant the permissions you want the agent to use.
-
-### 2. Export the keys in your shell
-
-The plugins and the Gemini extension read the keys from the process environment of whatever launches your editor. Set them in your shell profile:
-
-```sh
-export PADDLE_SANDBOX_API_KEY=pdl_sdbx_...
-export PADDLE_LIVE_API_KEY=...  # only if you also want the live MCP
-```
-
-See [`.env.example`](./.env.example) for the full list of variables and inline guidance.
-
-Restart your editor after setting the variables so the MCP servers pick them up.
+> **Prefer an API key?** You can still authenticate with a Paddle API key instead of OAuth — add an `Authorization: Bearer <key>` header to the `paddle-sandbox` / `paddle-live` entries in your plugin's MCP config. See [`.env.example`](./.env.example) for details. OAuth is the recommended default.
 
 ### Picking the right MCP at runtime
 
-With both servers connected, the agent sees two parallel toolsets. Be explicit in your prompts about which environment you mean. For example, "create a product in sandbox" routes to `paddle-sandbox`; "create the equivalent product in live" routes to `paddle-live`. Sandbox keys only authenticate against the sandbox URL and live keys only against the live URL, so a mismatch surfaces as an auth failure.
+With both servers connected, the agent sees two parallel toolsets. Be explicit in your prompts about which environment you mean. For example, "create a product in sandbox" routes to `paddle-sandbox`; "create the equivalent product in live" routes to `paddle-live`. The server name determines the environment.
 
 ## Use the skills outside a plugin
 
