@@ -72,7 +72,7 @@ All of the plugins wire up the same three MCP servers:
 
 | MCP server       | URL                                  | Authentication                    |
 | ---------------- | ------------------------------------ | --------------------------------- |
-| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | OAuth                              |
+| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | OAuth                             |
 | `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | OAuth (authorize in your browser) |
 | `paddle-live`    | `https://mcp.paddle.com/mcp`         | OAuth (authorize in your browser) |
 
