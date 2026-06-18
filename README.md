@@ -72,11 +72,13 @@ All of the plugins wire up the same three MCP servers:
 
 | MCP server       | URL                                  | Authentication                    |
 | ---------------- | ------------------------------------ | --------------------------------- |
-| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | None                              |
+| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | OAuth                              |
 | `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | OAuth (authorize in your browser) |
 | `paddle-live`    | `https://mcp.paddle.com/mcp`         | OAuth (authorize in your browser) |
 
-The first time your agent uses `paddle-sandbox` or `paddle-live`, it opens your browser to authorize with Paddle (OAuth 2.1) — no API keys to generate, export, or rotate. Approve the connection and the agent can use the MCP tools. The connection has access to whatever your Paddle user's role permits, and you may be asked to re-authorize from time to time.
+The first time your agent uses `paddle-sandbox` or `paddle-live`, it opens your browser to authorize with Paddle (OAuth) — no API keys to generate, export, or rotate. Approve the connection and the agent can use the MCP tools. The connection has access to whatever your Paddle user's role permits, and you may be asked to re-authorize from time to time.
+
+The docs MCP requires you to authenticate with a Google or GitHub account. It uses the anonymous user ID from the chosen provider only to enforce per-user rate limits and protect from abuse.
 
 > **Prefer an API key?** You can still authenticate with a Paddle API key instead of OAuth — add an `Authorization: Bearer <key>` header to the `paddle-sandbox` / `paddle-live` entries in your plugin's MCP config. See [`.env.example`](./.env.example) for details. OAuth is the recommended default.
 
