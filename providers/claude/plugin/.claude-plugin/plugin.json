@@ -10,5 +10,19 @@
   "homepage": "https://developer.paddle.com/get-started/ai/claude-code/",
   "repository": "https://github.com/PaddleHQ/paddle-agent-skills",
   "license": "Apache-2.0",
-  "keywords": ["paddle", "billing", "payments", "subscriptions", "saas"]
+  "keywords": ["paddle", "billing", "payments", "subscriptions", "saas"],
+  "userConfig": {
+    "sandbox_api_key": {
+      "type": "string",
+      "title": "Paddle sandbox API key",
+      "description": "Sandbox API key from Paddle > Developer tools > Authentication (starts with pdl_sdbx_). Authenticates the paddle-sandbox MCP server.",
+      "sensitive": true
+    },
+    "live_api_key": {
+      "type": "string",
+      "title": "Paddle live API key",
+      "description": "Optional. Live API key for the paddle-live MCP server. Leave blank during development.",
+      "sensitive": true
+    }
+  }
 }
