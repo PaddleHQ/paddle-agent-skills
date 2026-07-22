@@ -7,16 +7,12 @@
     "paddle-live": {
       "type": "http",
       "url": "https://mcp.paddle.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${PADDLE_LIVE_API_KEY}"
-      }
+      "bearer_token_env_var": "PADDLE_LIVE_API_KEY"
     },
     "paddle-sandbox": {
       "type": "http",
       "url": "https://sandbox-mcp.paddle.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${PADDLE_SANDBOX_API_KEY}"
-      }
+      "bearer_token_env_var": "PADDLE_SANDBOX_API_KEY"
     }
   }
 }

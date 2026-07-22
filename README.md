@@ -34,6 +34,8 @@ Inside [Claude Code](https://claude.com/claude-code), run:
 
 Then ask Claude something Paddle-shaped, like "help me verify a Paddle webhook in Next.js," and the relevant skill is selected automatically.
 
+When you enable the plugin, Claude Code prompts for your Paddle sandbox (and optional live) API key and stores it securely in your keychain — no shell environment variables needed. (Requires Claude Code v2.1.207 or later.)
+
 To update later, run `/plugin marketplace update paddle-agent-skills`.
 
 ## Install as a Codex plugin
@@ -68,7 +70,11 @@ Gemini auto-discovers the bundled [`skills/`](skills) directory at the extension
 
 ## Connect the Paddle MCP servers
 
-All of the plugins wire up the same three MCP servers. They share configuration through environment variables, so set the keys once and any of the four agents can use them.
+All of the plugins wire up the same three MCP servers, but how you provide the API key depends on the tool:
+
+- **Claude Code** — prompts you for the key when you enable the plugin and stores it in your OS keychain. No shell setup. (See [Install as a Claude Code plugin](#install-as-a-claude-code-plugin).)
+- **Codex** and **Gemini CLI** — read the key from environment variables; export them (below).
+- **Cursor** — you paste the key into the install deeplink. (See the [Cursor setup guide](https://developer.paddle.com/get-started/ai/cursor).)
 
 | MCP server       | URL                                  | API key env var          |
 | ---------------- | ------------------------------------ | ------------------------ |
@@ -76,7 +82,7 @@ All of the plugins wire up the same three MCP servers. They share configuration 
 | `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | `PADDLE_SANDBOX_API_KEY` |
 | `paddle-live`    | `https://mcp.paddle.com/mcp`         | `PADDLE_LIVE_API_KEY`    |
 
-You only need to set the keys for the environments you use. The unset one will fail to authenticate at editor startup and the agent logs the failure but otherwise carries on. The skills default to sandbox unless you've explicitly opted into live, so `PADDLE_SANDBOX_API_KEY` is the one to start with during development.
+You only need the environments you use. The skills default to sandbox unless you've explicitly opted into live, so `PADDLE_SANDBOX_API_KEY` is the one to start with during development.
 
 ### 1. Get a Paddle API key
 
@@ -87,9 +93,9 @@ Generate keys at **Paddle > Developer tools > Authentication**:
 
 Grant the permissions you want the agent to use.
 
-### 2. Export the keys in your shell
+### 2. Export the keys in your shell (Codex and Gemini CLI)
 
-The plugins and the Gemini extension read the keys from the process environment of whatever launches your editor. Set them in your shell profile:
+Codex and Gemini CLI read the keys from the process environment of whatever launches your editor. Set them in your shell profile:
 
 ```sh
 export PADDLE_SANDBOX_API_KEY=pdl_sdbx_...
@@ -98,7 +104,7 @@ export PADDLE_LIVE_API_KEY=...  # only if you also want the live MCP
 
 See [`.env.example`](./.env.example) for the full list of variables and inline guidance.
 
-Restart your editor after setting the variables so the MCP servers pick them up.
+Restart your editor after setting the variables so the MCP servers pick them up. (Claude Code doesn't need this — it prompts at enable; Cursor takes the key from its install deeplink.)
 
 ### Picking the right MCP at runtime
 

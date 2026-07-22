@@ -8,14 +8,14 @@
       "type": "http",
       "url": "https://mcp.paddle.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${PADDLE_LIVE_API_KEY}"
+        "Authorization": "Bearer ${user_config.live_api_key}"
       }
     },
     "paddle-sandbox": {
       "type": "http",
       "url": "https://sandbox-mcp.paddle.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${PADDLE_SANDBOX_API_KEY}"
+        "Authorization": "Bearer ${user_config.sandbox_api_key}"
       }
     }
   }
