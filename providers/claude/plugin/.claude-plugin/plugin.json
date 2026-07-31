@@ -15,13 +15,7 @@
     "sandbox_api_key": {
       "type": "string",
       "title": "Paddle sandbox API key",
-      "description": "Sandbox API key (starts with pdl_sdbx_). Authenticates the paddle-sandbox MCP server.",
-      "sensitive": true
-    },
-    "live_api_key": {
-      "type": "string",
-      "title": "Paddle live API key",
-      "description": "Live API key. Authenticates the the paddle-live MCP server.",
+      "description": "Sandbox API key (starts with pdl_sdbx_). Authenticates the paddle-sandbox MCP server. The paddle-live MCP server authorizes with OAuth in your browser, so it needs no key here.",
       "sensitive": true
     }
   }
