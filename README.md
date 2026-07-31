@@ -74,11 +74,13 @@ All of the plugins wire up the same three MCP servers. How you authenticate depe
 
 | MCP server       | URL                                  | Authentication                    |
 | ---------------- | ------------------------------------ | --------------------------------- |
-| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | _(none required)_                 |
+| `paddle-docs`    | `https://paddlehq.mcp.kapa.ai`       | Google or GitHub sign-in          |
 | `paddle-sandbox` | `https://sandbox-mcp.paddle.com/mcp` | Sandbox API key                   |
 | `paddle-live`    | `https://mcp.paddle.com/mcp`         | OAuth (authorize in your browser) |
 
 You only need the environments you use. The skills default to sandbox unless you've explicitly opted into live, so the sandbox key is the one to set up first.
+
+`paddle-docs` is hosted by [Kapa.ai](https://kapa.ai) and needs no Paddle credentials. It does ask you to sign in with Google or GitHub the first time you connect, which Kapa uses only for per-user rate limiting and abuse prevention — it requests the `openid` scope from Google and no scopes at all from GitHub.
 
 ### Sandbox: set an API key
 
