@@ -105,7 +105,7 @@ See [`.env.example`](./.env.example) for the full list of variables and inline g
 
 `paddle-live` authorizes with OAuth, so there's no key to create or store. The first time your agent uses the server, your client opens a browser window to sign in to Paddle and approve access. Depending on the client you may need to trigger this manually — Claude Code and Gemini CLI use `/mcp`, Codex uses `codex mcp login paddle-live`.
 
-An OAuth connection has whatever access your Paddle user's role permits. You can review, adjust, or revoke connections under **Paddle > Connectors > MCP**.
+An OAuth connection starts with **read** access to what your Paddle user's role permits. To let the agent make changes in live, grant write permissions under **Paddle > Connectors > MCP**, where you can also review or revoke connections.
 
 If a browser sign-in isn't practical (an automated environment, for example), `paddle-live` also accepts a live API key as a Bearer token. See the [Paddle MCP server docs](https://developer.paddle.com/sdks/ai/paddle-mcp) for that configuration.
 
