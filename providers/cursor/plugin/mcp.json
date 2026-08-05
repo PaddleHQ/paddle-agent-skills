@@ -1,21 +1,15 @@
 {
   "mcpServers": {
     "paddle-docs": {
-      "type": "http",
       "url": "https://paddlehq.mcp.kapa.ai"
     },
     "paddle-live": {
-      "type": "http",
-      "url": "https://mcp.paddle.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${PADDLE_LIVE_API_KEY}"
-      }
+      "url": "https://mcp.paddle.com/mcp"
     },
     "paddle-sandbox": {
-      "type": "http",
       "url": "https://sandbox-mcp.paddle.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${PADDLE_SANDBOX_API_KEY}"
+        "Authorization": "Bearer ${env:PADDLE_SANDBOX_API_KEY}"
       }
     }
   }
