@@ -6,10 +6,7 @@
     },
     "paddle-live": {
       "type": "http",
-      "url": "https://mcp.paddle.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${user_config.live_api_key}"
-      }
+      "url": "https://mcp.paddle.com/mcp"
     },
     "paddle-sandbox": {
       "type": "http",
