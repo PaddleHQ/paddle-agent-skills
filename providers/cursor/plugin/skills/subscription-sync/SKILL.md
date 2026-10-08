@@ -246,7 +246,7 @@ Use the Paddle API only for **mutations**: cancel, pause, resume, upgrade, refun
 
 Adding subscription sync to an existing app (with existing Paddle data) means you need to backfill before relying on the mirror.
 
-> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). List methods return `{ pagination: { hasMore, estimatedTotal }, <resource>: [...] }`, not `data`. The array's key is the resource's API path segment, so it's kebab-case where the method path is camelCase: `(await client.products.list()).products`, `(await client.clientTokens.list())["client-tokens"]`. Page with `{ after: "<last_id>" }` while `pagination.hasMore` is true, not `.next()`. Single-entity methods return the entity. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
 
 If a Paddle MCP server is available to you, paginate explicitly inside one `execute` call:
 
@@ -256,8 +256,8 @@ async (client) => {
   let after;
   do {
     const page = await client.customers.list({ after, per_page: 200 });
-    customers.push(...page.data);
-    after = page.pagination.hasMore ? page.data.at(-1).id : undefined;
+    customers.push(...page.customers);
+    after = page.pagination.hasMore ? page.customers.at(-1).id : undefined;
   } while (after);
   return customers;
 };
