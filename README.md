@@ -8,7 +8,7 @@ This repo contains a collection of agent skills that help you implement Paddle i
 
 ## What's included
 
-Ten skills covering the most common Paddle integration tasks:
+Eleven skills covering the most common Paddle integration tasks:
 
 - **[`paddle-billing-history`](skills/billing-history/SKILL.md)** — show authenticated customers their past Paddle transactions with invoice download links.
 - **[`paddle-catalog-setup`](skills/catalog-setup/SKILL.md)** — create the Paddle products and prices that other skills depend on.
@@ -19,6 +19,7 @@ Ten skills covering the most common Paddle integration tasks:
 - **[`paddle-subscription-cancel`](skills/subscription-cancel/SKILL.md)** — build a "cancel at end of period" flow with the right ownership checks and webhook reconciliation.
 - **[`paddle-subscription-sync`](skills/subscription-sync/SKILL.md)** — mirror Paddle subscription and customer state into your database via webhooks.
 - **[`paddle-subscription-update`](skills/subscription-update/SKILL.md)** — upgrade, downgrade, or change subscription items via the API with proration handling.
+- **[`paddle-usage-based-billing`](skills/usage-based-billing/SKILL.md)** — add usage-based billing (early access) to a Next.js app: usage balance units, meters, price allowances, usage events, and balance checks.
 - **[`paddle-webhooks`](skills/webhooks/SKILL.md)** — receive and verify Paddle webhooks in a Next.js Route Handler, with idempotency and retry handling.
 
 Each skill lives in its own directory under [`skills/`](skills) and ships with a `SKILL.md` containing the skill's frontmatter and instructions. The same skills are mirrored into each provider's plugin folder under [`providers/`](providers) by [`scripts/sync-skills.mjs`](scripts/sync-skills.mjs) — see [CONTRIBUTING.md](CONTRIBUTING.md) for the layout.
