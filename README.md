@@ -8,7 +8,7 @@ This repo contains a collection of agent skills that help you implement Paddle i
 
 ## What's included
 
-Eleven skills covering the most common Paddle integration tasks:
+A batch of skills covering the most common Paddle integration tasks:
 
 - **[`paddle-billing-history`](skills/billing-history/SKILL.md)** — show authenticated customers their past Paddle transactions with invoice download links.
 - **[`paddle-catalog-setup`](skills/catalog-setup/SKILL.md)** — create the Paddle products and prices that other skills depend on.
