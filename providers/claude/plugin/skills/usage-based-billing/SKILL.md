@@ -1,6 +1,6 @@
 ---
 name: paddle-usage-based-billing
-description: Add Paddle usage-based billing (early access) to a Next.js app — early access check, usage balance units, meters, price allowances, usage events, balance gating, grants, and `usage_balance.depleted`, using the Paddle API directly.
+description: Add Paddle usage-based billing (early access) to a Next.js app — early access check, usage balance units, meters, price allowances, usage events, balance gating, and `usage_balance.depleted`, using the Paddle API directly.
 ---
 
 # Add usage-based billing to a Next.js app (early access)
@@ -34,14 +34,12 @@ Read this first. These facts change how you build the integration.
 2. **Meters** (`mtr_`) turn usage into drawdown. Each meter links an `action`, like `api_call`, to one usage balance unit, at a `rate`. A usage event draws down `quantity × rate` from the customer's balance of that unit. Several meters can draw down the same unit, for example `chat_message` at `"1"` and `report_export` at `"25"` from one "Credits" unit.
 3. **Allowances** on recurring prices grant an amount of a unit each billing period, multiplied by the item quantity.
 4. **Usage balances** (`ubl_`) hold what a customer has used and has left. Paddle creates one for each customer and unit in the background when a subscription with an allowance activates. They belong to the customer, not the subscription: allowances from several subscriptions for the same unit combine into one balance.
-5. **Grants** (`ucb_`) show where a usage balance comes from. Each subscription with an allowance for the unit funds the balance with a grant, which has its own `granted`, `used`, and `remaining` amounts and an `expires_at`. Paddle creates and updates grants, so they're read-only.
-6. **Usage events** report usage. Paddle accepts them straight away and draws down balances shortly after.
+5. **Usage events** report usage. Paddle accepts them straight away and draws down balances shortly after.
 
 Across a billing period:
 
 - **`remaining` counts down to `"0"`** and never goes negative. After that, usage is recorded as `overage`, which Paddle doesn't bill during early access (beta).
-- **`used` doesn't include overage**, so the allowance is `used.total` + `remaining.total`. The `subscription` amount in each breakdown always equals `total` during early access (beta), so don't build UI around the split. For a breakdown by subscription, use grants (Step 6).
-- **Paddle draws down grants in `priority` order**, lowest first, then the grant that expires soonest. For customers with more than one subscription, that decides whose allowance usage comes from.
+- **`used` doesn't include overage**, so the allowance is `used.total` + `remaining.total`. The `subscription` amount in each breakdown always equals `total` during early access (beta), so don't build UI around the split.
 - **At renewal**, unused usage expires, Paddle grants the full allowance again, and clears overage. Unused usage doesn't roll over.
 - **`usage_balance.depleted` occurs when usage draws `remaining` to `"0"`.** There's no event when usage is replenished.
 
@@ -425,33 +423,6 @@ export async function getRemaining(cache: BalanceCache, customerId: string, unit
 - **Refresh the cache** when it's older than the TTL, when `usage_balance.depleted` arrives, and after a subscription renews or changes.
 - **To show usage**, the allowance is `used.total` + `remaining.total`. Show `overage.total` separately.
 
-### Show what's left of each allowance and when it resets
-
-The usage balance only has totals. To show when unused usage expires, like "6,500 calls left, resets on 10 October", or to break the balance down for customers with more than one subscription, list the balance's grants. Read them when you render the page; they don't need caching like the balance does.
-
-```ts
-// utils/paddle/usage.ts (continued)
-export type UsageBalanceGrant = {
-  id: string;
-  source: { type: string; id: string }; // type is "subscription" during early access (beta)
-  amount: { granted: string; used: string; remaining: string };
-  period: { starts_at: string; ends_at: string } | null;
-  expires_at: string | null;
-};
-
-// usageBalanceId is the id from getUsageBalance(). Soonest to expire first.
-export async function listGrants(customerId: string, usageBalanceId: string) {
-  const result = await paddleApi<{ data: UsageBalanceGrant[] }>(
-    `/customers/${customerId}/usage-balances/${usageBalanceId}/grants?order_by=expires_at[ASC]&per_page=200`,
-  );
-  return result.data;
-}
-```
-
-- **`expires_at` is when what's left of the grant expires**, and `period` is the billing period of the subscription that funded it. To get one subscription's grant, add `source_id=sub_...` to the query.
-- **Used-up grants stay in the list** until they expire or a renewal replaces them. Paddle doesn't return expired or replaced grants, so you can't use grants as a usage history.
-- **`amount.remaining` across all grants adds up to `balance.remaining.total`**, but grants don't include overage. Right after a renewal or plan change, a new grant can take a moment to appear, so the totals might not match until it does.
-
 ## Step 7: Handle `usage_balance.depleted`
 
 Subscribe your notification destination to `usage_balance.depleted`. It's only listed for accounts in early access.
@@ -488,7 +459,7 @@ export async function processEvent(event: EventEntity) {
 
 - **It doesn't occur when usage expires** at the end of a billing period.
 - **It can occur again** after a renewal or plan change grants more usage and the customer runs out again. Dedupe on `event.eventId`.
-- **There's no "replenished" event.** When `subscription.updated` arrives for a renewal or plan change, queue a job to refresh the cached balance. The new grant is created in the background too.
+- **There's no "replenished" event.** When `subscription.updated` arrives for a renewal or plan change, queue a job to refresh the cached balance. Paddle grants the new allowance in the background too.
 
 ## Renewals and plan changes
 
@@ -523,17 +494,15 @@ Not available during early access (beta), so don't build for them: trials, one-t
 1. Run the access check from Step 2 and confirm `GET /meters` succeeds.
 2. In a sandbox account, create a unit, a meter, and a price with an allowance of `"3"`, so it's quick to use up. Complete a checkout with a test card (see `sandbox-testing`).
 3. Confirm the job from Step 4 finds the usage balance, with `remaining.total` of `"3"` and `used.total` of `"0"`.
-4. List the balance's grants. Confirm there's one grant whose `source.id` is the subscription ID, with `amount.remaining` of `"3"`.
-5. Record one event with `quantity: "1"`. After a few seconds, confirm `remaining.total` is `"2"`.
-6. Send the same row again, with the same `event_key` and `occurred_at`. Confirm `remaining.total` doesn't change.
-7. Record two more events. Confirm `usage_balance.depleted` arrives at your webhook endpoint and your app applies what you agreed for zero.
-8. Record one more event. Confirm `remaining.total` stays `"0"` and `overage.total` is `"1"`.
+4. Record one event with `quantity: "1"`. After a few seconds, confirm `remaining.total` is `"2"`.
+5. Send the same row again, with the same `event_key` and `occurred_at`. Confirm `remaining.total` doesn't change.
+6. Record two more events. Confirm `usage_balance.depleted` arrives at your webhook endpoint and your app applies what you agreed for zero.
+7. Record one more event. Confirm `remaining.total` stays `"0"` and `overage.total` is `"1"`.
 
 ## Related docs
 
 - [Set up usage-based billing](https://developer.paddle.com/build/usage-based-billing.md) — the end-to-end tutorial, early access limitations, and the form to apply for access.
 - [Meters](https://developer.paddle.com/api-reference/meters), [Usage balance units](https://developer.paddle.com/api-reference/usage-balance-units), [Usage balances](https://developer.paddle.com/api-reference/usage-balances), and [Usage events](https://developer.paddle.com/api-reference/usage-events) — API reference.
-- [List grants for a usage balance](https://developer.paddle.com/api-reference/usage-balances/list-usage-balance-grants) — API reference for grants.
 - [`usage_balance.depleted`](https://developer.paddle.com/webhooks/usage-balances/usage-balance-depleted) — webhook reference.
 - [API key permissions](https://developer.paddle.com/api-reference/about/permissions.md)
 - [Rate limiting](https://developer.paddle.com/api-reference/about/rate-limiting.md)
