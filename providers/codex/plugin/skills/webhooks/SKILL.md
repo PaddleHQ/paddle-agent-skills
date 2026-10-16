@@ -20,12 +20,13 @@ This skill is the foundation for almost every server-side Paddle integration. Pa
 Every design choice in this skill follows from these facts about how Paddle delivers webhooks. Read this section first; everything else is mechanics.
 
 - **Only `2xx` within 5 seconds is "delivered."** Any other response — `400`, `401`, `500`, `503`, a redirect, a connection timeout — is treated as a failed delivery and gets retried. There is no status code that means "stop retrying" on the integrator side. Paddle retries any non-2xx response.
-- **Retry schedule.** Sandbox: 3 attempts over ~15 minutes. Live: 60 attempts over ~3 days, exponential backoff (~60s × `attempt^1.1`). Connection timeouts count toward the same budget as non-2xx responses.
+- **Retry schedule.** Paddle retries on an exponential backoff schedule. Sandbox: 3 attempts within 15 minutes. Live: 60 attempts within 3 days. Connection timeouts count toward the same budget as non-2xx responses.
 - **Same `event.eventId` on every retry.** Paddle re-sends the identical payload (modulo a fresh signature timestamp) until you 2xx or the retry budget is exhausted. That id is your dedup key.
+- **No ordering guarantee.** A retry or replay can arrive after a newer event. Store `event.occurredAt` and only apply an event that's newer than the last one you applied (Step 5).
 - **No redirect following.** A `301` or `302` is treated as a failed delivery, not followed.
-- **After the retry budget is exhausted, the event is gone.** You can replay manually from the dashboard's notification log, or via the Paddle MCP server with `client.notifications.replay(notificationId)` inside an `execute` call (note: `notificationId` is a positional path param, not a body field). Plan for this when bringing an endpoint back from extended downtime — query the API for current state rather than waiting for events.
+- **Failed notifications can be replayed for about 90 days.** Once retries run out, the notification is marked `failed`. Replay it from **Paddle > Events > Notifications** (open the destination, then **Retry** on the notification), or via the Paddle MCP server with `client.notifications.replay("ntf_…")` inside an `execute` call (the notification ID is a positional path param, not a body field). A replay creates a new notification ID for the same event ID and gets one attempt. Events are kept for 90 days: after extended downtime, list what you missed with `GET /events` and its `from`/`to` filters, or query the API for current state.
 
-> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). List methods return `{ pagination: { hasMore, estimatedTotal }, <resource>: [...] }`, not `data`. The array's key is the resource's API path segment, so it's kebab-case where the method path is camelCase: `(await client.products.list()).products`, `(await client.clientTokens.list())["client-tokens"]`. Page with `{ after: "<last_id>" }` while `pagination.hasMore` is true, not `.next()`. Lists that aren't paginated, like `client.currencies.list()`, return a plain array. Single-entity methods return the entity. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, and 32,000 characters of code.
 
 ## Prerequisites
 
@@ -41,6 +42,8 @@ PADDLE_API_KEY=pdl_sdbx_apikey_...         # server-side; never expose to the br
 PADDLE_NOTIFICATION_WEBHOOK_SECRET=pdl_ntfset_...  # secret for THIS notification destination
 ```
 
+Verifying webhooks doesn't call the API, so the route handler needs no API key permissions. Managing webhooks through the API or the Paddle MCP does: `notification_setting.write` to create or update destinations (`notification_setting.read` to list them or read a secret), `notification.read` for notifications, logs and events, `notification.write` to replay, and `notification_simulation.write` to run simulations (`notification_simulation.read` to check results). Create API keys under **Paddle > My account > Settings > Authentication**.
+
 Install the server SDK:
 
 ```bash
@@ -51,14 +54,32 @@ npm install @paddle/paddle-node-sdk
 
 A notification destination tells Paddle "send these events to this URL." Each destination has its own secret — sandbox and production should be separate destinations with separate secrets, never shared.
 
-1. In the Paddle dashboard, go to **Paddle > Developer tools > Notifications**. (Or, if a Paddle MCP server is available to you, call `client.notificationSettings.create({ destination: "https://...", subscribed_events: [...], type: "url" })` inside an `execute` to create the destination programmatically — skip the dashboard steps below. CamelCase resource, snake_case body. See conventions above.)
+1. In the Paddle dashboard, go to **Paddle > Events > Notifications**.
 2. Click **New destination**.
 3. Set:
-   - **Description**: `Local dev` (or `Production`).
-   - **Type**: `Webhook`.
+   - **Notification type**: `Webhook`.
    - **URL**: your endpoint (e.g. `https://your-app.com/api/webhook` or your tunnelled local URL).
+   - **Description**: `Local dev` (or `Production`).
+   - **Usage type**: `Both` for a dev destination, so it receives real sandbox events and simulator events. `Platform` (real events only) suits production.
    - **Events**: select the events you need. Start with `transaction.completed`, `subscription.created`, `subscription.updated`, `subscription.canceled`, `customer.created`, `customer.updated`. You can subscribe to more later.
-4. Save and **copy the secret key**. You'll only see it once. This goes in `PADDLE_NOTIFICATION_WEBHOOK_SECRET`.
+4. Save, then copy the destination's **Secret key** into `PADDLE_NOTIFICATION_WEBHOOK_SECRET`. You can copy it again later from the destination's edit view, or read it as `endpoint_secret_key` from `GET /notification-settings/{id}`.
+
+When your tunnel URL changes, edit the existing destination's URL rather than creating a new destination, so the secret stays the same.
+
+If a Paddle MCP server is available to you, create the destination inside an `execute` call instead of using the dashboard (camelCase resource, snake_case body; see conventions above):
+
+```js
+async (client) =>
+  client.notificationSettings.create({
+    description: "Local dev", // required
+    destination: "https://abc123.ngrok.app/api/webhook",
+    type: "url",
+    subscribed_events: ["transaction.completed", "subscription.created", "subscription.updated"],
+    traffic_source: "all", // also receive simulator events; defaults to "platform"
+  });
+```
+
+The response includes `endpoint_secret_key`. A 409 `notification_setting_cannot_be_duplicate` means a destination with that URL already exists: find it in `(await client.notificationSettings.list())["notification-settings"]` and reuse it, or change it with `client.notificationSettings.update("ntfset_…", { ... })`, instead of creating another.
 
 ## Step 2: Create a Paddle SDK helper
 
@@ -135,7 +156,7 @@ Why a single catch returning one non-2xx, even for signature failures? A thrown 
 
 ## Step 4: Route the event to handlers
 
-Keep the route handler thin. Move event-specific logic into a separate function and switch on `eventType` using the `EventName` enum so TypeScript narrows `event.data` correctly:
+Keep the route handler thin. Move event-specific logic into a separate function and switch on `eventType` using the `EventName` enum. TypeScript narrows `event.data` in each case:
 
 ```ts
 // utils/paddle/process-webhook.ts
@@ -151,9 +172,11 @@ import {
 } from "@paddle/paddle-node-sdk";
 
 /**
- * Paddle delivers at-least-once. The same event.eventId arrives on every retry,
- * so every handler below MUST be idempotent — UPSERT keyed on the Paddle
- * resource id, or dedupe on event.eventId before non-DB side effects.
+ * Paddle delivers at-least-once and in no guaranteed order. The same
+ * event.eventId arrives on every retry, so every handler below MUST be
+ * idempotent: UPSERT keyed on the Paddle resource id and guarded by
+ * event.occurredAt (Step 5), or dedupe on event.eventId before non-DB
+ * side effects.
  */
 export async function processEvent(event: EventEntity) {
   // Idempotency: handlers may run multiple times for the same event.eventId.
@@ -176,8 +199,8 @@ export async function processEvent(event: EventEntity) {
 async function handleSubscription(
   event: SubscriptionCreatedEvent | SubscriptionUpdatedEvent | SubscriptionCanceledEvent,
 ) {
-  // TODO: idempotent UPSERT keyed on event.data.id. See subscription-sync.
-  // e.g. db.subscriptions.upsert({ where: { id: event.data.id }, update: {...}, create: {...} })
+  // TODO: UPSERT keyed on event.data.id, applied only if event.occurredAt is
+  // newer than the stored value. See Step 5 and subscription-sync.
 }
 
 async function handleTransactionCompleted(event: TransactionCompletedEvent) {
@@ -190,30 +213,32 @@ async function handleCustomer(event: CustomerCreatedEvent | CustomerUpdatedEvent
 }
 ```
 
-The Node SDK exports `EventName` (the string discriminator) and a typed event for each — TypeScript narrows `event.data` correctly when you switch on `eventType`. String literal comparisons like `event.eventType === "subscription.created"` work at runtime but lose narrowing and are fragile to spec changes.
+The Node SDK exports `EventName` (the string discriminator) and a typed event for each, so TypeScript narrows `event.data` when you switch on `eventType`. String literal comparisons like `event.eventType === "subscription.created"` narrow too; `EventName` is easier to read and safer to refactor.
 
-## Step 5: Make handlers idempotent
+## Step 5: Make handlers idempotent and order-safe
 
-The default path: write handlers in an UPSERT shape keyed on the Paddle resource id. Then duplicate deliveries become idempotent for free, and you don't need any extra bookkeeping.
+The default path: write handlers in an UPSERT shape keyed on the Paddle resource id, and store the event's `occurredAt` with the row. Paddle doesn't guarantee delivery order, so a retried or replayed older event can arrive after a newer one; only apply an event when its `occurredAt` is newer than the stored value. Do the check and the write in one atomic statement so concurrent deliveries can't interleave:
 
 ```ts
 async function handleSubscription(
   event: SubscriptionCreatedEvent | SubscriptionUpdatedEvent | SubscriptionCanceledEvent,
 ) {
-  await db.subscriptions.upsert({
-    where: { id: event.data.id },
-    update: {
-      status: event.data.status,
-      currentBillingPeriod: event.data.currentBillingPeriod,
-    },
-    create: {
-      /* ... */
-    },
-  });
+  // Insert, or update only if this event is newer than the last one applied.
+  await db.query(
+    `INSERT INTO subscriptions (id, status, next_billed_at, last_event_at)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (id) DO UPDATE SET
+       status = EXCLUDED.status,
+       next_billed_at = EXCLUDED.next_billed_at,
+       last_event_at = EXCLUDED.last_event_at
+     WHERE subscriptions.last_event_at IS NULL
+        OR subscriptions.last_event_at < EXCLUDED.last_event_at`,
+    [event.data.id, event.data.status, event.data.nextBilledAt, event.occurredAt],
+  );
 }
 ```
 
-Most webhook work fits this shape — subscription state, customer records, transaction records all have stable Paddle ids you can key on. The official starter kit ([`paddle-nextjs-starter-kit`](https://github.com/PaddleHQ/paddle-nextjs-starter-kit), see `src/utils/paddle/process-webhook.ts`) uses `supabase.from("subscriptions").upsert({...})` exactly this way and has no explicit dedup ledger.
+`last_event_at` is a `TIMESTAMPTZ` column; `event.occurredAt` is an ISO 8601 string. Compare against when the event happened, not when you received it. Duplicate and late deliveries then change nothing, with no extra bookkeeping. Most webhook work fits this shape — subscription state, customer records, transaction records all have stable Paddle ids you can key on. See `subscription-sync` for a Supabase version.
 
 ### When UPSERT isn't enough: an event-id ledger
 
@@ -244,7 +269,7 @@ CREATE TABLE processed_webhooks (
 );
 ```
 
-Use the ledger only when UPSERT-shaping doesn't cover the side effect. For most subscription/customer/transaction sync work, UPSERT is enough.
+Use the ledger only when UPSERT-shaping doesn't cover the side effect. For most subscription/customer/transaction sync work, the guarded UPSERT is enough.
 
 ## Step 6: Acknowledge fast — queue heavy work
 
@@ -274,12 +299,12 @@ ngrok http 3000
 
 Real Paddle events from the sandbox will then hit your local route handler.
 
-**B. Use the webhook simulator.** No tunnel needed for the simulator's "single event" mode targeted at a public URL, but for local testing the easiest flow is:
+**B. Use the webhook simulator.** The simulator sends to a notification destination, so localhost still needs a tunnel:
 
-1. Tunnel to localhost.
-2. In the dashboard, go to **Paddle > Developer tools > Simulations**.
-3. Pick an event type or a scenario (`subscription.created`, `transaction.paid`).
-4. Paddle constructs a payload, signs it with your destination's secret, and POSTs it to your URL.
+1. Tunnel to localhost and point a destination at it. Its **Usage type** must be `Simulation` or `Both`, and it must be subscribed to the events you simulate; otherwise the simulated event is marked `aborted` and not sent.
+2. In the dashboard, go to **Paddle > Events > Simulations**.
+3. Pick a single event, named like the event type (`subscription.created`, `transaction.paid`), or a scenario: `subscription_creation`, `subscription_renewal`, `subscription_pause`, `subscription_resume`, `subscription_cancellation`.
+4. Paddle constructs a payload, signs it with your destination's secret, and POSTs it to your URL once. Simulated events aren't retried and don't appear in notification logs; check the simulation run's events instead, where you can replay them.
 
 See `sandbox-testing` for the full sandbox + simulator workflow.
 
@@ -290,24 +315,26 @@ See `sandbox-testing` for the full sandbox + simulator workflow.
 - **Parsing the body before verification.** If you read JSON with `request.json()`, then re-serialize to verify, the byte sequence won't match what Paddle signed. Always use `await request.text()` and pass the raw string to `unmarshal()`.
 - **Wrong secret.** Each notification destination has its own secret. Mixing the sandbox secret with a production destination (or vice versa) results in `unmarshal` throwing on every delivery. `PADDLE_NOTIFICATION_WEBHOOK_SECRET` must match the destination you're targeting — and is _not_ the same value as `PADDLE_API_KEY`.
 - **Slow handlers.** 30 seconds of work in the route handler will time out at 5 seconds, count as a failed delivery, and burn a retry attempt. Verify, queue, ack.
-- **Treating webhooks as ordered.** They aren't. `subscription.updated` can arrive before the corresponding `subscription.created` if the first delivery is being retried. Use `occurred_at` if you need ordering, but the cleanest approach is to make handlers convergent — UPSERT to latest state.
-- **Missing events after extended downtime.** If your endpoint is down past the 3-day retry window, those events are gone. On next deploy, query the API for current state instead of waiting for replays — or replay specific events from the notification log.
+- **Treating webhooks as ordered.** They aren't. `subscription.updated` can arrive before the corresponding `subscription.created` if the first delivery is being retried, and a retried or replayed older event can land after a newer one. A plain UPSERT lets that older event overwrite newer state. Store `event.occurredAt` and only apply newer events (Step 5); dedupe on `event.eventId` for side effects.
+- **Missing events after extended downtime.** Live retries stop after 3 days (sandbox: 15 minutes). After that, replay failed notifications (up to about 90 days old) from **Paddle > Events > Notifications** or with `client.notifications.replay`, list missed events with `GET /events` (`from`/`to`), or query the API for current state.
+- **Clock skew.** The SDK rejects a signature whose `ts` is more than 5 seconds old, so a server clock that runs ahead makes every `unmarshal` throw. Keep server clocks in sync (NTP).
+- **IP allowlisting.** If your firewall only admits known sources, allowlist the addresses from `GET /ips`. Sandbox and live return different lists, so fetch each from its own API base URL. Still verify signatures.
 - **Forgetting to subscribe to the right events.** A destination only sends what you've ticked in the dashboard. Adding a new handler in code without ticking the matching event will leave it silently never firing.
 - **Body parsing on Pages Router.** Pages Router examples disabled `bodyParser` to access the raw body. App Router Route Handlers don't need this — `request.text()` always returns raw bytes.
 
 ## Verify the integration
 
 1. Add a `console.log(event.eventType, event.eventId)` at the top of `processEvent`.
-2. Tunnel localhost (`ngrok http 3000`) and update the destination URL to the tunnel.
-3. In the dashboard, go to **Paddle > Developer tools > Simulations** and run a `subscription.created` simulation against your destination.
+2. Tunnel localhost (`ngrok http 3000`) and update the destination URL to the tunnel. The destination's **Usage type** must be `Simulation` or `Both`.
+3. In the dashboard, go to **Paddle > Events > Simulations** and run a `subscription.created` simulation against your destination.
 4. Confirm:
    - The route handler logs the event type.
-   - The dashboard shows a 200 response under **Paddle > Developer tools > Notifications > [your destination] > Logs**. (If a Paddle MCP server is available, `client.notifications.logs.list(notificationSettingId, { per_page: 50 })` returns the same — note the path is nested under `notifications`, not a top-level resource, and `notificationSettingId` is a positional path param.)
-5. Deliberately tamper with the secret in `.env.local` and re-simulate. Confirm:
+   - The simulation run's event shows a 200 response. Simulated events get one attempt and don't appear in notification logs. (If a Paddle MCP server is available, `client.simulations.runsEvents.list("ntfsim_…", "ntfsimrun_…")` returns the run's `events`, each with its status, request and response.)
+5. Deliberately tamper with the secret in `.env.local` and replay the simulated event. Confirm:
    - The handler returns a non-2xx (this skill's handler returns 500).
-   - The dashboard log shows the failed delivery and a queued retry.
-   - Restore the correct secret afterwards — Paddle will retry the failed delivery and it should succeed.
-6. Trigger a real flow: complete a sandbox checkout (see `checkout-web`) and confirm the resulting `transaction.completed` and `subscription.created` events arrive.
+   - The run's event shows the failed delivery. Simulated events aren't retried.
+   - Restore the correct secret, then replay the event again (in the dashboard, or with `client.simulations.runsEvents.replay(simulationId, runId, eventId)`). It should succeed.
+6. Trigger a real flow: complete a sandbox checkout (see `checkout-web`) and confirm the resulting `transaction.completed` and `subscription.created` events arrive. Real deliveries show under **Paddle > Events > Notifications**: open your destination, then **View Logs** on a notification. (With the Paddle MCP: find notification IDs with `client.notifications.list({ notification_setting_id: ["ntfset_…"] })`, then `client.notifications.logs.list("ntf_…", { per_page: 50 })`, which returns `{ pagination, logs }`. Logs are nested under `notifications`, and the notification ID is a positional path param.)
 
 ## Related docs
 
