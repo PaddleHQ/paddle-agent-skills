@@ -15,7 +15,7 @@ paddle-agent-skills/
 │   ├── claude/plugin/                  # Claude Code plugin
 │   ├── cursor/plugin/                  # Cursor plugin
 │   └── codex/plugin/                   # Codex plugin
-├── gemini-extension.json               # Gemini CLI extension (MCP-only)
+├── gemini-extension.json               # Gemini CLI extension (MCP config; skills/ is auto-discovered)
 ├── .claude-plugin/marketplace.json     # → providers/claude/plugin/
 ├── .cursor-plugin/marketplace.json     # → providers/cursor/plugin/
 ├── .agents/plugins/marketplace.json    # → providers/codex/plugin/  (Codex)
@@ -49,6 +49,6 @@ Each skill has **two names** that intentionally differ:
 | Folder under `skills/`        | no `paddle-` prefix | `checkout-web/`       | The folder name becomes the [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins) skill namespace, e.g. `/paddle:checkout-web`. The `paddle:` prefix already comes from the plugin name.                                                |
 | `SKILL.md` frontmatter `name` | `paddle-` prefixed  | `paddle-checkout-web` | The frontmatter name is what surfaces in the [developer.paddle.com skill listing](https://developer.paddle.com/sdks/ai/agent-skills) and the skills CLI install path. The `paddle-` prefix keeps the branding visible for users outside the plugin context. |
 
-When we mirror to developer.paddle.com, the folder name becomes the skill namespace, e.g. `/paddle:checkout-web`.
+When we mirror to developer.paddle.com, each skill is published under its `paddle-` prefixed name, e.g. `/.well-known/skills/paddle-checkout-web/SKILL.md`, and listed by its frontmatter `name`.
 
 When adding a new skill, follow the same pattern: `skills/<name>/SKILL.md` for the folder, `name: paddle-<name>` in the frontmatter. Then run `pnpm run sync-skills` to mirror it into each provider folder.

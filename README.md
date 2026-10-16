@@ -25,18 +25,18 @@ Each skill lives in its own directory under [`skills/`](skills) and ships with a
 
 ## Install as a Claude Code plugin
 
-Inside [Claude Code](https://claude.com/claude-code), run:
+The Paddle plugin is listed in Anthropic's community plugin marketplace. Inside [Claude Code](https://claude.com/claude-code), run:
 
 ```text
-/plugin marketplace add PaddleHQ/paddle-agent-skills
-/plugin install paddle@paddle-agent-skills
+/plugin marketplace add anthropics/claude-plugins-community
+/plugin install paddle@claude-community
 ```
 
 Then ask Claude something Paddle-shaped, like "help me verify a Paddle webhook in Next.js," and the relevant skill is selected automatically.
 
-When you enable the plugin, Claude Code prompts for your Paddle sandbox API key and stores it securely in your keychain — no shell environment variables needed. The live MCP server authorizes with OAuth in your browser, so it needs no key. (Requires Claude Code v2.1.207 or later.)
+When you enable the plugin, Claude Code prompts for your Paddle sandbox API key and stores it securely in your keychain — no shell environment variables needed. The live MCP server authorizes with OAuth in your browser, so it needs no key. (Requires Claude Code v2.1.119 or later.)
 
-To update later, run `/plugin marketplace update paddle-agent-skills`.
+To update later, run `/plugin marketplace update claude-community`.
 
 ## Install as a Codex plugin
 
@@ -68,6 +68,8 @@ gemini extensions install PaddleHQ/paddle-agent-skills
 
 Gemini auto-discovers the bundled [`skills/`](skills) directory at the extension root and wires up the docs and Paddle MCP servers via [`gemini-extension.json`](gemini-extension.json). Export `PADDLE_SANDBOX_API_KEY` for the sandbox server (see [Connect the Paddle MCP servers](#connect-the-paddle-mcp-servers)); the live server authorizes with OAuth.
 
+> **Note:** Since June 18, 2026, Gemini CLI only serves paid Gemini API keys and Gemini Code Assist Standard and Enterprise licenses. Google recommends that everyone else moves to [Antigravity CLI](https://antigravity.google/docs/cli/gcli-migration/). To bring this extension across, install it with Gemini CLI, then run `agy plugin import gemini` to convert it to an Antigravity plugin. Antigravity CLI has an [open issue](https://github.com/google-antigravity/antigravity-cli/issues/25) with OAuth for HTTP MCP servers, so `paddle-docs` and `paddle-live` might not connect there yet.
+
 ## Connect the Paddle MCP servers
 
 All of the plugins wire up the same three MCP servers. How you authenticate depends on the environment:
@@ -80,11 +82,11 @@ All of the plugins wire up the same three MCP servers. How you authenticate depe
 
 You only need the environments you use. The skills default to sandbox unless you've explicitly opted into live, so the sandbox key is the one to set up first.
 
-`paddle-docs` is hosted by [Kapa.ai](https://kapa.ai) and needs no Paddle credentials. It does ask you to sign in with Google or GitHub the first time you connect, which Kapa uses only for per-user rate limiting and abuse prevention — it requests the `openid` scope from Google and no scopes at all from GitHub.
+`paddle-docs` is hosted by [Kapa.ai](https://kapa.ai) and needs no Paddle credentials. It does ask you to sign in with Google or GitHub the first time you connect, which Kapa uses only for per-user rate limiting and abuse prevention — it requests the `openid` scope from Google and no scopes at all from GitHub. In Codex, start the sign-in with `codex mcp login paddle-docs` (Codex 0.107 or later).
 
 ### Sandbox: set an API key
 
-`paddle-sandbox` authenticates with a sandbox API key. Generate one at **Paddle > Developer tools > Authentication** in the [sandbox dashboard](https://sandbox-vendors.paddle.com/authentication-v2) (keys are prefixed `pdl_sdbx_`), granting the permissions you want the agent to use.
+`paddle-sandbox` authenticates with a sandbox API key. Generate one at **Paddle > My account > Settings > Authentication** in the [sandbox dashboard](https://sandbox-vendors.paddle.com/settings/authentication) (keys are prefixed `pdl_sdbx_`), granting the permissions you want the agent to use.
 
 How you supply it depends on the tool:
 
@@ -105,7 +107,7 @@ See [`.env.example`](./.env.example) for the full list of variables and inline g
 
 `paddle-live` authorizes with OAuth, so there's no key to create or store. The first time your agent uses the server, your client opens a browser window to sign in to Paddle and approve access. Depending on the client you may need to trigger this manually — Claude Code and Gemini CLI use `/mcp`, Codex uses `codex mcp login paddle-live`.
 
-An OAuth connection starts with **read** access to what your Paddle user's role permits. To let the agent make changes in live, grant write permissions under **Paddle > Connectors > MCP**, where you can also review or revoke connections.
+An OAuth connection starts with **read** access to what your Paddle user's role permits. To let the agent make changes in live, grant write permissions under **Paddle > Connectors > MCPs**, where you can also review or revoke connections.
 
 If a browser sign-in isn't practical (an automated environment, for example), `paddle-live` also accepts a live API key as a Bearer token. See the [Paddle MCP server docs](https://developer.paddle.com/sdks/ai/paddle-mcp) for that configuration.
 
@@ -115,13 +117,13 @@ With both servers connected, the agent sees two parallel toolsets. Be explicit i
 
 ## Use the skills outside a plugin
 
-Skills also work in any agentic tool that supports the agent-skills format. Use the [`skills` CLI](https://github.com/vercel-labs/agent-skills) to add them to your project:
+Skills also work in any agentic tool that supports the agent-skills format. Use the [`skills` CLI](https://github.com/vercel-labs/skills) to add them to your project:
 
 ```sh
 pnpm dlx skills add https://developer.paddle.com/
 ```
 
-You can also add skills manually by copying the contents of a skill's directory into your project's `.agent/skills/` directory, or a global `~/.agent/skills/` directory to share across projects.
+You can also add skills manually by copying the contents of a skill's directory into your project's `.agents/skills/` directory, or a global `~/.agents/skills/` directory to share across projects.
 
 ## Contributing
 
