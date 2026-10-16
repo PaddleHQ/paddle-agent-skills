@@ -19,6 +19,7 @@ This skill assumes you already receive verified webhooks. If you don't, do `webh
   - `customer.created`, `customer.updated`
   - `subscription.created`, `subscription.updated`, `subscription.canceled`
   - Optionally: `transaction.completed` (for one-off purchases), `subscription.activated` (when a trial converts)
+- For the backfill and reconciliation job: an API key with `customer.read` and `subscription.read`. The webhook handler itself doesn't call the API.
 
 ## Why mirror state at all?
 
@@ -31,34 +32,140 @@ Mirroring means: webhooks are the source of truth that updates your DB; your app
 The minimum viable schema, in SQL:
 
 ```sql
--- Maps a Paddle customer to your app user (by email is the easiest bridge).
+-- Maps a Paddle customer to your app user (email is the fallback bridge).
 CREATE TABLE customers (
   customer_id TEXT PRIMARY KEY,        -- "ctm_01h..."
   email TEXT NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+  last_event_at TIMESTAMPTZ,           -- occurredAt of the newest event applied
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX customers_email_idx ON customers(email);
 
 CREATE TABLE subscriptions (
   subscription_id TEXT PRIMARY KEY,    -- "sub_01h..."
   customer_id TEXT NOT NULL REFERENCES customers(customer_id),
+  user_id TEXT,                        -- your app's user ID, from checkout customData
   subscription_status TEXT NOT NULL,   -- see "Status semantics" below
   price_id TEXT NOT NULL,
   product_id TEXT NOT NULL,
-  scheduled_change TIMESTAMP,          -- non-null when a pause or cancel is pending
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+  scheduled_change_action TEXT,        -- 'cancel' | 'pause' | 'resume'; null if nothing is scheduled
+  scheduled_change_effective_at TIMESTAMPTZ,
+  paddle_created_at TIMESTAMPTZ NOT NULL, -- Paddle's created_at, for ordering
+  last_event_at TIMESTAMPTZ,           -- occurredAt of the newest event applied
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX subscriptions_customer_id_idx ON subscriptions(customer_id);
+CREATE INDEX subscriptions_user_id_idx ON subscriptions(user_id);
 CREATE INDEX subscriptions_status_idx ON subscriptions(subscription_status);
 ```
 
 This is intentionally lean. Add columns as you need them (e.g. `currency_code`, `next_billed_at`, `discount_id`, `items` as JSONB for multi-item subscriptions). The Paddle data is much richer; only mirror what your UI actually queries.
 
+Paddle doesn't guarantee delivery order: a retry or replay can arrive after a newer event. So writes go through two functions that insert a row, or update it only when the incoming event is newer than `last_event_at`, in one atomic statement:
+
+```sql
+CREATE OR REPLACE FUNCTION upsert_subscription(
+  p_subscription_id TEXT, p_customer_id TEXT, p_user_id TEXT, p_status TEXT,
+  p_price_id TEXT, p_product_id TEXT, p_scheduled_change_action TEXT,
+  p_scheduled_change_effective_at TIMESTAMPTZ, p_paddle_created_at TIMESTAMPTZ,
+  p_last_event_at TIMESTAMPTZ
+) RETURNS void LANGUAGE sql AS $$
+  INSERT INTO subscriptions AS s (
+    subscription_id, customer_id, user_id, subscription_status, price_id, product_id,
+    scheduled_change_action, scheduled_change_effective_at, paddle_created_at, last_event_at
+  ) VALUES (
+    p_subscription_id, p_customer_id, p_user_id, p_status, p_price_id, p_product_id,
+    p_scheduled_change_action, p_scheduled_change_effective_at, p_paddle_created_at, p_last_event_at
+  )
+  ON CONFLICT (subscription_id) DO UPDATE SET
+    customer_id = EXCLUDED.customer_id,
+    user_id = COALESCE(EXCLUDED.user_id, s.user_id),
+    subscription_status = EXCLUDED.subscription_status,
+    price_id = EXCLUDED.price_id,
+    product_id = EXCLUDED.product_id,
+    scheduled_change_action = EXCLUDED.scheduled_change_action,
+    scheduled_change_effective_at = EXCLUDED.scheduled_change_effective_at,
+    paddle_created_at = EXCLUDED.paddle_created_at,
+    last_event_at = EXCLUDED.last_event_at,
+    updated_at = NOW()
+  WHERE s.last_event_at IS NULL OR s.last_event_at < EXCLUDED.last_event_at;
+$$;
+
+CREATE OR REPLACE FUNCTION upsert_customer(
+  p_customer_id TEXT, p_email TEXT, p_last_event_at TIMESTAMPTZ
+) RETURNS void LANGUAGE sql AS $$
+  INSERT INTO customers AS c (customer_id, email, last_event_at)
+  VALUES (p_customer_id, p_email, p_last_event_at)
+  ON CONFLICT (customer_id) DO UPDATE SET
+    email = EXCLUDED.email,
+    last_event_at = EXCLUDED.last_event_at,
+    updated_at = NOW()
+  WHERE c.last_event_at IS NULL OR c.last_event_at < EXCLUDED.last_event_at;
+$$;
+```
+
+The functions run with the caller's privileges, so Row Level Security still applies; call them with the service-role client. The `IS NULL` check lets the first write land on rows that existed before you added `last_event_at`. Outside Supabase, run the same `INSERT … ON CONFLICT … DO UPDATE … WHERE` statement directly.
+
+## Supabase clients
+
+The examples use two server-side Supabase helpers, matching the Paddle Next.js starter kit. If your app already has equivalents, use those. `createClient` from `@/utils/supabase/server` reads as the signed-in user (anon key, user session cookies):
+
+```ts
+// utils/supabase/server.ts
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+
+export async function createClient() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options),
+            );
+          } catch {
+            // Called from a Server Component; middleware refreshes the session instead.
+          }
+        },
+      },
+    },
+  );
+}
+```
+
+```ts
+// utils/supabase/server-internal.ts — service role, no user session. Server-only.
+import { createServerClient } from "@supabase/ssr";
+
+export async function createClient() {
+  // No cookies: with the signed-in user's session attached, requests would run
+  // as that user and row-level security (RLS) would still apply.
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { cookies: { getAll: () => [], setAll: () => {} } },
+  );
+}
+```
+
+Import it as `import { createClient as createAdminClient } from "@/utils/supabase/server-internal"` and only use it on the server: in the webhook handler, or in a Server Action after you've checked who the user is. It deliberately skips cookies, so it never picks up a signed-in user's session. If you write your own wrapper, don't name it `createServerClient`, which would shadow the `@supabase/ssr` import.
+
 ## Map app users to Paddle customers
 
-The cleanest bridge is **email**:
+The most reliable bridge is **your own user ID**, passed through checkout:
+
+- Open checkout with `customData: { userId: user.id }` (see `checkout-web`).
+- Paddle copies the checkout's custom data onto the transaction, and onto the subscription created from it. `subscription.created` arrives with `data.customData.userId`.
+- The handler below stores it as `subscriptions.user_id`.
+
+Keep **email** as a fallback, for subscriptions created without that custom data:
 
 - Your app's user table has an email.
 - Paddle's customer record has an email.
@@ -96,55 +203,65 @@ Inside the route handler from `webhooks`, route to a typed handler:
 // utils/paddle/process-webhook.ts
 import {
   EventName,
-  type EventEntity,
-  type SubscriptionCreatedEvent,
-  type SubscriptionUpdatedEvent,
-  type SubscriptionCanceledEvent,
+  type Customer,
   type CustomerCreatedEvent,
   type CustomerUpdatedEvent,
+  type EventEntity,
+  type Subscription,
+  type SubscriptionCanceledEvent,
+  type SubscriptionCreatedEvent,
+  type SubscriptionUpdatedEvent,
 } from "@paddle/paddle-node-sdk";
-import { createClient } from "@/utils/supabase/server-internal";
+import { createClient as createAdminClient } from "@/utils/supabase/server-internal";
 
 type SubscriptionEvent =
   | SubscriptionCreatedEvent
   | SubscriptionUpdatedEvent
   | SubscriptionCanceledEvent;
+type CustomerEvent = CustomerCreatedEvent | CustomerUpdatedEvent;
 
 export async function processEvent(event: EventEntity) {
   switch (event.eventType) {
     case EventName.SubscriptionCreated:
     case EventName.SubscriptionUpdated:
     case EventName.SubscriptionCanceled:
-      return upsertSubscription(event);
+      return saveSubscription(event.data, event.occurredAt);
     case EventName.CustomerCreated:
     case EventName.CustomerUpdated:
-      return upsertCustomer(event);
+      return saveCustomer(event.data, event.occurredAt);
   }
 }
 
-async function upsertSubscription(event: SubscriptionEvent) {
-  const supabase = await createClient();
-  const sub = event.data;
+// eventAt is the event's occurredAt (or the entity's updatedAt when reconciling).
+// The SQL function ignores the write if the row already has a newer one.
+export async function saveSubscription(
+  sub: SubscriptionEvent["data"] | Subscription,
+  eventAt: string,
+) {
+  const admin = await createAdminClient();
+  const userId = sub.customData?.userId;
 
-  const { error } = await supabase.from("subscriptions").upsert({
-    subscription_id: sub.id,
-    customer_id: sub.customerId,
-    subscription_status: sub.status,
-    price_id: sub.items[0]?.price?.id ?? "",
-    product_id: sub.items[0]?.price?.productId ?? "",
-    scheduled_change: sub.scheduledChange?.effectiveAt ?? null,
-    updated_at: new Date().toISOString(),
+  const { error } = await admin.rpc("upsert_subscription", {
+    p_subscription_id: sub.id,
+    p_customer_id: sub.customerId,
+    p_user_id: typeof userId === "string" ? userId : null,
+    p_status: sub.status,
+    p_price_id: sub.items[0]?.price?.id ?? "",
+    p_product_id: sub.items[0]?.price?.productId ?? "",
+    p_scheduled_change_action: sub.scheduledChange?.action ?? null,
+    p_scheduled_change_effective_at: sub.scheduledChange?.effectiveAt ?? null,
+    p_paddle_created_at: sub.createdAt,
+    p_last_event_at: eventAt,
   });
-
   if (error) throw error;
 }
 
-async function upsertCustomer(event: CustomerCreatedEvent | CustomerUpdatedEvent) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("customers").upsert({
-    customer_id: event.data.id,
-    email: event.data.email,
-    updated_at: new Date().toISOString(),
+export async function saveCustomer(customer: CustomerEvent["data"] | Customer, eventAt: string) {
+  const admin = await createAdminClient();
+  const { error } = await admin.rpc("upsert_customer", {
+    p_customer_id: customer.id,
+    p_email: customer.email,
+    p_last_event_at: eventAt,
   });
   if (error) throw error;
 }
@@ -152,34 +269,34 @@ async function upsertCustomer(event: CustomerCreatedEvent | CustomerUpdatedEvent
 
 A few notes:
 
-- The webhook handler must use a Supabase client with the **service role key**, not the anon key — webhooks don't run as a logged-in user, and your RLS policies will block writes from anon. Keep the service-role client in a separate file (e.g. `server-internal.ts`) so it isn't accidentally used in user-facing code.
-- `UPSERT` keyed on `subscription_id` makes the handler idempotent for state mirrors. Repeated deliveries converge on the latest state.
+- The webhook handler must use a Supabase client with the **service role key** (`createAdminClient`), not the anon key — webhooks don't run as a logged-in user, and your RLS policies will block writes from anon. Keep the service-role client in its own file (`server-internal.ts`) so it's never imported into client code.
+- Ordering: a retried or replayed older event can arrive after a newer one. Because the functions only write when `occurredAt` is newer than `last_event_at`, late and repeated deliveries change nothing. Keep deduping on `event.eventId` for side effects that aren't state writes, like sending emails (see `webhooks`).
 - The `items` array can have multiple line items for hybrid subscriptions. The example only stores the first; for multi-item subscriptions, store the whole array as JSONB.
 
 ## Status semantics
 
 `subscription.status` is the field your access-gating logic should read. Values:
 
-| Status     | Meaning                                                   | Should the user have access?      |
-| ---------- | --------------------------------------------------------- | --------------------------------- |
-| `active`   | Paying, current.                                          | Yes                               |
-| `trialing` | In a free trial period.                                   | Yes                               |
-| `past_due` | Most recent invoice failed; Paddle is retrying (dunning). | Usually yes — a few days of grace |
-| `paused`   | Subscription is paused; no billing, no service.           | No (typically)                    |
-| `canceled` | Cancellation has taken effect.                            | No                                |
+| Status     | Meaning                                                                                                        | Should the user have access? |
+| ---------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `active`   | Paying, current.                                                                                               | Yes                          |
+| `trialing` | In a trial period (free or paid).                                                                              | Yes                          |
+| `past_due` | Payment is overdue. Automatic collection: Paddle retries (dunning). Manual collection (invoices): not retried. | Yes, with a banner           |
+| `paused`   | Subscription is paused; no billing, no service.                                                                | No (typically)               |
+| `canceled` | Cancellation has taken effect.                                                                                 | No                           |
 
-`canceled` is the **terminal state** — it means the subscription has actually ended. If a user cancels but their billing period hasn't run out yet, the status stays `active` and `scheduled_change` is set. The status only flips to `canceled` when that scheduled date arrives.
+`canceled` is the **terminal state** — it means the subscription has actually ended. If a user cancels but their billing period hasn't run out yet, the status doesn't change (it stays `active`, `trialing` or `past_due`) and `scheduled_change_action` is `cancel`. The status only flips to `canceled` when `scheduled_change_effective_at` arrives.
 
 A reasonable access gate:
 
 ```ts
 function hasActiveSubscription(sub: Subscription | null): boolean {
   if (!sub) return false;
-  return sub.subscription_status === "active" || sub.subscription_status === "trialing";
+  return ["active", "trialing", "past_due"].includes(sub.subscription_status);
 }
 ```
 
-We recommend granting access during `past_due`, but showing a banner to the user to update their payment method.Paddle Retain automatically retries payment for you.
+During `past_due`, keep access but show a banner asking the user to update their payment method (or pay the invoice, for manual collection).
 
 ## Handling scheduled changes
 
@@ -198,17 +315,23 @@ When a user cancels mid-period, or schedules a pause, Paddle sends a `subscripti
 }
 ```
 
-The status is still `active` — they keep service until `effective_at`. Then Paddle sends a second event flipping status to `canceled` (or `paused`) and clearing `scheduled_change`.
+The status doesn't change (here `active`; it can also be `trialing` or `past_due`) — they keep service until `effective_at`. Then Paddle sends another event flipping status to `canceled` (or `paused`) and clearing `scheduled_change`. A paused subscription with a resume date has a `resume` scheduled change.
 
-In your UI, a non-null `scheduled_change` is the signal to show "Your subscription will cancel on May 12" instead of "Subscribe". Here's a typical pattern:
+Store `scheduled_change.action` and `scheduled_change.effective_at` as `scheduled_change_action` and `scheduled_change_effective_at`. In your UI, the action decides the message, like "Your subscription will cancel on May 12" instead of "Subscribe". Here's a typical pattern:
 
 ```ts
-function getSubscriptionUiState(sub: Subscription) {
+function getSubscriptionUiState(sub: Subscription | null) {
   if (!sub) return "no-subscription";
-  if (sub.scheduled_change) {
-    return sub.subscription_status === "paused" ? "pause-scheduled" : "cancel-scheduled";
+  switch (sub.scheduled_change_action) {
+    case "cancel":
+      return "cancel-scheduled";
+    case "pause":
+      return "pause-scheduled";
+    case "resume":
+      return "resume-scheduled";
+    default:
+      return sub.subscription_status; // 'active' | 'trialing' | 'past_due' | 'paused' | 'canceled'
   }
-  return sub.subscription_status; // 'active' | 'trialing' | 'paused' | 'canceled' | 'past_due'
 }
 ```
 
@@ -224,21 +347,30 @@ import { createClient } from "@/utils/supabase/server";
 import { getCustomerId } from "@/utils/paddle/get-customer-id";
 
 export async function getUserSubscription() {
-  const customerId = await getCustomerId();
-  if (!customerId) return null;
-
   const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData?.user?.id;
+  if (!userId) return null;
+
+  // Match the user ID from checkout customData, or fall back to the email-matched customer.
+  const customerId = await getCustomerId();
+  const match = customerId
+    ? `user_id.eq.${userId},customer_id.eq.${customerId}`
+    : `user_id.eq.${userId}`;
+
   const { data } = await supabase
     .from("subscriptions")
     .select("*")
-    .eq("customer_id", customerId)
-    .order("created_at", { ascending: false })
+    .or(match)
+    .order("paddle_created_at", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   return data;
 }
 ```
+
+This returns the newest subscription by Paddle's `created_at`. Don't order by your own `created_at`: that's when the row was written, which backfills and out-of-order events scramble. If a user can hold several subscriptions, filter on `subscription_status` (e.g. `.in("subscription_status", ["active", "trialing", "past_due"])`) or return them all.
 
 Use the Paddle API only for **mutations**: cancel, pause, resume, upgrade, refund. Reads should hit your DB.
 
@@ -255,7 +387,11 @@ async (client) => {
   const customers = [];
   let after;
   do {
-    const page = await client.customers.list({ after, per_page: 200 });
+    const page = await client.customers.list({
+      after,
+      per_page: 200,
+      status: ["active", "archived"],
+    });
     customers.push(...page.customers);
     after = page.pagination.hasMore ? page.customers.at(-1).id : undefined;
   } while (after);
@@ -263,69 +399,55 @@ async (client) => {
 };
 ```
 
-**The 50-call cap matters here.** With `per_page: 200` that's a ceiling of ~10,000 customers per `execute` invocation. If the user's account fits in one execute, this is fine. If not, split across multiple `execute` calls — pass the last seen ID back in as the starting `after` cursor each time — or fall back to the SDK script below, which has no such cap.
+Listing customers returns only `active` ones by default; include `archived` so older subscriptions still find their customer row. Page through `client.subscriptions.list()` the same way (`page.subscriptions`); it returns every status by default.
 
-Otherwise (or for larger backfills), use a one-shot SDK script:
+**The 50-call cap matters here.** With `per_page: 200` that's a ceiling of ~10,000 customers per `execute` invocation. If the user's account fits in one execute, this is fine. If not, split across multiple `execute` calls — pass the last seen ID back in as the starting `after` cursor each time — or fall back to the SDK job below, which has no such cap.
+
+Otherwise (or for larger backfills), use the SDK. Writing through the same `saveCustomer`/`saveSubscription` helpers keeps the ordering guard: each entity's `updatedAt` stands in for the event time, so the job never overwrites a newer webhook write. Run it inside your Next.js app so it reuses those helpers, for example as a cron-triggered Route Handler:
 
 ```ts
-// scripts/backfill-paddle.ts
+// app/api/cron/reconcile-paddle/route.ts
 import { getPaddleInstance } from "@/utils/paddle/get-paddle-instance";
-import { db } from "@/lib/db";
+import { saveCustomer, saveSubscription } from "@/utils/paddle/process-webhook";
 
-async function main() {
+export async function GET(request: Request) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const paddle = getPaddleInstance();
-  const customers = paddle.customers.list();
-  for await (const customer of customers) {
-    await db.customers.upsert({
-      where: { customer_id: customer.id },
-      create: { customer_id: customer.id, email: customer.email },
-      update: { email: customer.email },
-    });
+  for await (const customer of paddle.customers.list({ status: ["active", "archived"] })) {
+    await saveCustomer(customer, customer.updatedAt);
   }
-
-  const subs = paddle.subscriptions.list();
-  for await (const sub of subs) {
-    await db.subscriptions.upsert({
-      where: { subscription_id: sub.id },
-      create: {
-        subscription_id: sub.id,
-        customer_id: sub.customerId,
-        subscription_status: sub.status,
-        price_id: sub.items[0]?.price?.id ?? "",
-        product_id: sub.items[0]?.price?.productId ?? "",
-        scheduled_change: sub.scheduledChange?.effectiveAt ?? null,
-      },
-      update: {
-        /* same fields */
-      },
-    });
+  for await (const sub of paddle.subscriptions.list()) {
+    await saveSubscription(sub, sub.updatedAt);
   }
+  return Response.json({ ok: true });
 }
-main().catch(console.error);
 ```
 
-Run it once before flipping access gating to read from your DB.
+Run it once before flipping access gating to read from your DB. Then keep running it on a schedule (for example nightly, from your platform's cron) as a reconciliation job that repairs anything a missed webhook left stale. On large accounts, split the work to stay within your platform's function time limit.
 
 ## Common pitfalls
 
-- **Using a Supabase anon key in the webhook handler.** RLS policies block the writes. Use the service role key in a server-internal client.
-- **Mapping users by `customer_id` before checkout.** A new app user has no Paddle customer until they complete a checkout. Match on email when the row first appears.
+- **Using a Supabase anon key in the webhook handler.** RLS policies block the writes. Use the service role key in a server-internal client (`createAdminClient`).
+- **Mapping users by `customer_id` before checkout.** A new app user has no Paddle customer until they complete a checkout. Pass your user ID in checkout `customData`, and fall back to matching on email.
 - **Treating `canceled` as "just hit cancel".** It's the terminal state. The "user pressed cancel" event is `subscription.updated` with a non-null `scheduled_change.action: 'cancel'`, unless you allow users to cancel immediately. Don't revoke access until status flips to `canceled`.
 - **Reading status from a stale row.** If your handler is queued (which it should be for slow ops), the DB row is updated _after_ the queue worker runs. Latency between webhook receipt and row update is typically sub-second, but if you need read-after-write within the route handler itself, do the upsert synchronously.
 - **Storing only one item from `subscription.items`.** If you sell hybrid plans (a base subscription + addons), store the whole array. Otherwise the UI shows the first item only.
-- **No backfill before flipping reads to your DB.** Existing customers will look like "no subscription" until their next webhook — which might be when they cancel. Always backfill first.
+- **No backfill before flipping reads to your DB.** Existing customers will look like "no subscription" until their next webhook — which might be when they cancel. Always backfill first, then keep reconciling on a schedule.
 - **Forgetting `customer.updated`.** If a customer changes their email in Paddle, you won't be able to look them up via `getCustomerId` until you sync the new email. Subscribe to `customer.updated` from day one.
-- **Out-of-order events.** `subscription.updated` can occasionally arrive before its `subscription.created` if Paddle retries the first one. UPSERT handles this automatically (the second event also creates the row if missing). Don't rely on event ordering — rely on convergent state.
+- **Out-of-order events.** Paddle doesn't guarantee delivery order. `subscription.updated` can arrive before its `subscription.created`, and a retried or replayed older event can land after a newer one. A plain UPSERT lets that older event overwrite newer state. Write through the `last_event_at` guard above, and dedupe side effects on `event.eventId`.
 
 ## Verify the integration
 
-1. Create a sandbox subscription via your checkout flow.
-2. Check your `customers` and `subscriptions` tables — both should have the new rows within a second of `checkout.completed`.
+1. Create a sandbox subscription via your checkout flow, passing your user ID in `customData`.
+2. Check your `customers` and `subscriptions` tables — both should have the new rows within a second of `checkout.completed`, with `user_id` set on the subscription.
 3. Cancel the subscription via your customer portal.
-4. Confirm:
-   - The `subscriptions` row shows `subscription_status: 'active'` with `scheduled_change` set.
-   - In the dashboard, advance the clock or wait for the period — the status flips to `canceled`.
-5. Use the simulator (see `sandbox-testing`) to fire `subscription.updated` with a `paused` status and confirm your UI handles it.
+4. Confirm the `subscriptions` row keeps its status (`active`, or `trialing` during a trial) with `scheduled_change_action: 'cancel'` and `scheduled_change_effective_at` set.
+5. There's no test clock in sandbox, so don't wait for the period to end. Either cancel a sandbox subscription with `effective_from: "immediately"` (see `subscription-cancel`), or run a simulator `subscription_cancellation` scenario (see `sandbox-testing`); it defaults to effective immediately. The simulator only sends webhooks, so enter your sandbox subscription's ID to get its real IDs in the payloads, and use a destination with **Usage type** `Simulation` or `Both`. Confirm the row flips to `canceled` and the scheduled change columns clear.
+6. Run a `subscription_pause` scenario the same way and confirm your UI handles `paused`.
 
 ## Related docs
 
