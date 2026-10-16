@@ -2,7 +2,8 @@
   "mcpServers": {
     "paddle-docs": {
       "type": "http",
-      "url": "https://paddlehq.mcp.kapa.ai"
+      "url": "https://paddlehq.mcp.kapa.ai",
+      "oauth_resource": "https://paddlehq.mcp.kapa.ai/"
     },
     "paddle-live": {
       "type": "http",

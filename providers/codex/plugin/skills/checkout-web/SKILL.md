@@ -20,26 +20,33 @@ This skill is client-side only. Pair it with:
 You need:
 
 - A Paddle account, with the **sandbox** environment active during development.
-  - Sign up for sandbox: https://sandbox-vendors.paddle.com/
+  - Sign up for sandbox: https://sandbox-login.paddle.com/signup
   - Sign up for live: https://vendors.paddle.com/
 - At least one product and price set up. Use `catalog-setup` if you haven't yet — note the price ID (looks like `pri_01h...`) for use below.
-- Your domain approved for checkout under **Paddle > Checkout > Website approval**. Domains are approved automatically in sandbox.
-- Your default payment link set under **Paddle > Checkout > Checkout settings > Default payment link**. You can use `https://localhost/` for sandbox, then change later.
-- Two environment variables from **Paddle > Developer tools > Authentication**:
+- Your domain approved for checkout under **Paddle > My account > Settings > Website approval**. Domains are approved automatically in sandbox.
+- Your default payment link set under **Paddle > Checkout > Checkout configuration** (the **Default payment link** field). You can use `https://localhost/` for sandbox, then change later.
+- Two environment variables. Create the client-side token under **Paddle > My account > Settings > Authentication**, on the **Client-side tokens** tab:
 
 ```bash
 NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=test_...   # client-side token, safe to expose
 NEXT_PUBLIC_PADDLE_ENV=sandbox             # or "production"
 ```
 
-If a Paddle MCP server is available to you, call `client.clientTokens.create({ name: "Frontend dev token" })` inside an `execute` to provision the token programmatically rather than asking the user to copy it from the dashboard. Note `clientTokens` is camelCase.
+If a Paddle MCP server is available to you, call `client.clientTokens.create({ name: "Frontend dev token" })` inside an `execute` to provision the token programmatically rather than asking the user to copy it from the dashboard. Note `clientTokens` is camelCase. Creating a token needs the `client_token.write` permission.
 
-> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). Pagination is `{ pagination: { hasMore }, data: [...] }` with `{ after: "<last_id>" }` — not `.next()` / `.hasMore`. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, 32KB code.
+> The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). List methods return `{ pagination: { hasMore, estimatedTotal }, <resource>: [...] }`, not `data`. The array's key is the resource's API path segment, so it's kebab-case where the method path is camelCase: `(await client.products.list()).products`, `(await client.clientTokens.list())["client-tokens"]`. Page with `{ after: "<last_id>" }` while `pagination.hasMore` is true, not `.next()`. Lists that aren't paginated, like `client.currencies.list()`, return a plain array. Single-entity methods return the entity. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, and 32,000 characters of code.
 
 Install the client library:
 
 ```bash
 npm install @paddle/paddle-js
+```
+
+The inline example below throttles `updateItems` with `lodash.throttle`. If you use that pattern, install it and its types too:
+
+```bash
+npm install lodash.throttle
+npm install -D @types/lodash.throttle
 ```
 
 The Node SDK (`@paddle/paddle-node-sdk`) is for server-side work — you do not need it for checkout.
@@ -59,8 +66,17 @@ Both use the same `Paddle.Checkout.open()` call — the only difference is the `
 | -------------- | ---------------------------------------------------------------------------------------------------------- |
 | **One-page**   | A single-page checkout experience with all fields (customer and payment details) on the same screen.       |
 | **Multi-page** | A two-page checkout: customer details are collected on the first page, payment details on the second page. |
+| **Express**    | An inline checkout for express wallets (Apple Pay, Google Pay).                                            |
 
 Multi-page is the default. One-page is recommended for most use cases.
+
+Express (`variant: "express"`) has extra rules:
+
+- Inline only (`displayMode: "inline"`).
+- Checkout won't open if you combine it with an authenticated customer (`customerAuthToken`), `upsell`, `allowedPaymentMethods`, or a business on the transaction.
+- `showAddDiscounts`, `allowDiscountRemoval`, `showAddTaxId`, and `allowLogout` are ignored.
+- Other payment methods show alongside the wallets unless you set `showNonExpressPaymentMethods: false` (defaults to `true`).
+- The types need `@paddle/paddle-js` 1.6.4+ for `express`, and 1.6.5+ for `showNonExpressPaymentMethods`.
 
 ## Overlay checkout — the minimum viable integration
 
@@ -145,8 +161,15 @@ export function CheckoutContents({ userEmail }: Props) {
       token: process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN,
       environment: process.env.NEXT_PUBLIC_PADDLE_ENV as Environments,
       eventCallback: (event) => {
-        if (event.data && event.name) {
+        if (event.name && event.data) {
+          // Every data event, checkout.loaded included, carries the latest totals.
           setCheckoutData(event.data);
+        } else if (event.type === "checkout.warning") {
+          // Warnings have no `name`: checkout opened, but some values were dropped.
+          console.warn("[Paddle]", event.detail);
+        } else if (event.name) {
+          // checkout.error / checkout.payment.error: flat { name, type, code, detail, documentation_url }.
+          console.error("[Paddle]", event.name, event.code, event.detail);
         }
       },
       checkout: {
@@ -158,7 +181,7 @@ export function CheckoutContents({ userEmail }: Props) {
           frameTarget: "paddle-checkout-frame",
           frameInitialHeight: 450,
           frameStyle: "width: 100%; background-color: transparent; border: none",
-          successUrl: "/checkout/success",
+          successUrl: `${window.location.origin}/checkout/success`, // must be absolute
         },
       },
     }).then((p) => {
@@ -195,8 +218,8 @@ export function CheckoutContents({ userEmail }: Props) {
 Three things to notice:
 
 1. **`frameTarget`** is a CSS class name (no leading dot). Whatever you set here, you must also render an element with that exact class. Paddle injects the iframe into it.
-2. **`eventCallback`** fires for every event — use the `event.name` to discriminate (`checkout.loaded`, `checkout.items.updated`, `checkout.completed`, `checkout.error`, `checkout.payment-error`, etc.). The starter kit just keeps the latest event data so a sibling component can show price totals.
-3. **`successUrl`** is where Paddle redirects after a successful payment. Make this a route that handles post-purchase logic (e.g. shows an order confirmation) — but **do not** rely on it for provisioning; the webhook is the source of truth.
+2. **`eventCallback`** fires for every event — use the `event.name` to discriminate (`checkout.loaded`, `checkout.items.updated`, `checkout.completed`, `checkout.payment.failed`, etc.). The example keeps the latest event data so a sibling component can show price totals. Taking it from every data event, `checkout.loaded` included, means the totals are right before the first update. Error and warning events have a different shape — see "Reading checkout state" below.
+3. **`successUrl`** is where Paddle redirects after checkout completes. It must be an absolute `http(s)://` URL, so build it from `window.location.origin`. `Checkout.open()` throws on a relative URL, and a relative URL passed to `initializePaddle` is dropped: checkout emits `checkout.warning` and doesn't redirect. Make this a route that handles post-purchase UX (e.g. shows an order confirmation) — but **do not** rely on it for provisioning; the webhook is the source of truth.
 
 ## Customer pre-fill
 
@@ -222,7 +245,7 @@ Setting `allowLogout: false` in the checkout settings prevents the user from sig
 
 ## Dynamic line items
 
-To change quantity, swap a price, or add another item without closing the checkout, call `Paddle.Checkout.updateItems()`:
+To change quantity, swap a price, or add another item without closing the checkout, call `Paddle.Checkout.updateItems()`. It **replaces** the whole list — any item you leave out is removed:
 
 ```tsx
 paddle.Checkout.updateItems([
@@ -231,21 +254,29 @@ paddle.Checkout.updateItems([
 ]);
 ```
 
+- Recurring items must share the same billing cycle and trial period.
+- An empty list, or any item with `quantity` below 1, is ignored. To remove an item, send the list without it.
+- Check the list against these rules before you call it.
+
 Always **throttle** these calls (1 second is a good default — see the `lodash.throttle` example above). Paddle re-renders the checkout on each call, and unthrottled updates produce a flicker and rate-limit risk.
 
 ## Reading checkout state
 
 Hook into the `eventCallback` to drive your own UI (running totals, line item breakdowns, applied discounts). The most useful events:
 
-| Event                       | Fires when                                  | Common use                                |
-| --------------------------- | ------------------------------------------- | ----------------------------------------- |
-| `checkout.loaded`           | Checkout finishes initial render            | Hide a loading spinner                    |
-| `checkout.items.updated`    | Line items change (incl. via `updateItems`) | Update a sibling price summary            |
-| `checkout.customer.created` | New customer is created during checkout     | Capture the new `customer.id`             |
-| `checkout.payment.selected` | User picks a payment method                 | Conditionally show region-specific copy   |
-| `checkout.completed`        | Payment succeeds                            | Trigger a confetti animation, redirect    |
-| `checkout.error`            | Something went wrong opening checkout       | Surface a fallback (mailto, support link) |
-| `checkout.payment-error`    | A payment attempt failed                    | Show retry guidance — never the raw error |
+| Event                       | Fires when                                                                | Common use                                          |
+| --------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------- |
+| `checkout.loaded`           | Checkout finishes initial render                                          | Hide a loading spinner, set the initial totals      |
+| `checkout.items.updated`    | Line items change (incl. via `updateItems`)                               | Update a sibling price summary                      |
+| `checkout.customer.created` | New customer is created during checkout                                   | Capture the new `customer.id`                       |
+| `checkout.payment.selected` | User picks a payment method                                               | Conditionally show region-specific copy             |
+| `checkout.completed`        | Customer completes checkout — the payment may still be processing         | Show a thank-you state (grant access from webhooks) |
+| `checkout.error`            | Something went wrong opening checkout                                     | Surface a fallback (mailto, support link)           |
+| `checkout.payment.failed`   | A payment attempt failed (card decline, 3DS, wallet)                      | Show retry guidance — never the raw error           |
+| `checkout.payment.error`    | No payment methods are available (`code: "no_payment_methods_available"`) | Surface a fallback (mailto, support link)           |
+| `checkout.warning`          | Checkout opened, but some prefill or settings values were dropped         | Log it in development to catch bad input            |
+
+Error events (`checkout.error`, `checkout.payment.error`) have no `data`. Their `name`, `type`, `code`, `detail`, and `documentation_url` are top-level fields on the event (since `@paddle/paddle-js` 1.6.1). `checkout.warning` has no `name` at all, so match it with `event.type === "checkout.warning"`.
 
 Full list at [developer.paddle.com/paddle-js/events](https://developer.paddle.com/paddle-js/events.md).
 
@@ -253,10 +284,10 @@ Full list at [developer.paddle.com/paddle-js/events](https://developer.paddle.co
 
 When checkout completes, two things happen in parallel:
 
-1. The user's browser is sent to your `successUrl` (or your custom event handler).
+1. Checkout fires `checkout.completed` and sends the user's browser to your `successUrl` (or your custom event handler). For some payment methods the payment is still processing at this point.
 2. Paddle fires a `transaction.completed` (and possibly `subscription.created`) webhook to your server.
 
-**Provisioning belongs in the webhook**, not the redirect. The redirect is for UX (showing "Thanks for your order"); the webhook is the durable, retried, signed event you can trust. See `webhooks` for setup.
+**Provisioning belongs in the webhook**, not the redirect or `checkout.completed`. The redirect is for UX (showing "Thanks for your order"); the webhook is the durable, retried, signed event you can trust. See `webhooks` for setup.
 
 ## Common pitfalls
 
@@ -265,9 +296,10 @@ When checkout completes, two things happen in parallel:
 - **Checkout doesn't render inline** — your `frameTarget` class name doesn't match a rendered element, or the element isn't in the DOM yet when `Checkout.open()` runs. Render the target first; open in a `useEffect`.
 - **Sandbox vs production drift** — `NEXT_PUBLIC_PADDLE_ENV` controls which environment Paddle.js talks to. If your client token is for sandbox but you set `NEXT_PUBLIC_PADDLE_ENV=production`, checkout will fail to load. Tokens and prices are environment-scoped — sandbox `pri_...` IDs don't exist in production.
 - **Pasting price IDs into client code** — fine for a quick prototype, but for a real app load price IDs from the server (after fetching the catalog) so you can swap them without a redeploy.
-- **Using the redirect for provisioning** — users close tabs, lose connections, or block redirects. Webhooks are the source of truth.
+- **Using the redirect or `checkout.completed` for provisioning** — `checkout.completed` can fire while the payment is still processing, and users close tabs, lose connections, or block redirects. Webhooks are the source of truth.
+- **Relative `successUrl`** — `Checkout.open()` throws, and one set through `initializePaddle` is dropped with only a `checkout.warning` to show for it. Use `` `${window.location.origin}/checkout/success` ``.
 - **Throttling `updateItems`** — without throttling, rapid quantity changes flicker and may rate-limit. 1 second is a sensible default.
-- **Calling `initializePaddle` twice** — the SDK warns and refuses on the second call. Guard with `paddle?.Initialized` (as in the example) or use a singleton pattern.
+- **Calling `initializePaddle` twice** — the second call doesn't initialize again; it calls `Paddle.Update()` with the new options, so they replace the ones you set first. Guard with `paddle?.Initialized` (as in the example) or use a singleton pattern, and pass per-checkout settings to `Paddle.Checkout.open({ settings })`.
 
 ## Verify the integration
 
