@@ -180,7 +180,7 @@ async function main() {
 
     if (error.code === "forbidden") {
       console.log(
-        "Missing usage-based billing permissions. Add them to the key in Paddle > Developer tools > " +
+        "Missing usage-based billing permissions. Add them to the key in Paddle > My account > Settings > " +
           "Authentication. If they aren't listed, apply for early access at " +
           "https://developer.paddle.com/build/usage-based-billing",
       );
