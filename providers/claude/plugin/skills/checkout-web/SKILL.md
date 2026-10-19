@@ -23,8 +23,8 @@ You need:
   - Sign up for sandbox: https://sandbox-login.paddle.com/signup
   - Sign up for live: https://vendors.paddle.com/
 - At least one product and price set up. Use `catalog-setup` if you haven't yet — note the price ID (looks like `pri_01h...`) for use below.
-- Your domain approved for checkout under **Paddle > My account > Settings > Website approval**. Domains are approved automatically in sandbox.
-- Your default payment link set under **Paddle > Checkout > Checkout configuration** (the **Default payment link** field). You can use `https://localhost/` for sandbox, then change later.
+- Your domain approved for checkout. In sandbox, checkout opens on any page, including `localhost`, and domains you add are approved automatically. In live, the user submits domains under **Paddle > My account > Settings > Website approval** — there's no API to submit one. If a Paddle MCP server is available, check approval with `client.checkoutDomains.list()` (`GET /checkout-domains`): each domain has a `status`, and only `approved` domains can run checkout.
+- Your default payment link set. Use a page on your own domain, not `localhost`. Its host must be a domain approved for the account, or that domain with `www.`, even in sandbox, where domains are approved as soon as you add them. If a Paddle MCP server is available, read it with `client.settings.checkoutUrl.get()` (`GET /settings/checkout-url`) — `default_url` is `null` until set. After asking the user, set it with `client.settings.checkoutUrl.update({ default_url: "https://..." })` (`PATCH /settings/checkout-url`, needs the `checkout_settings.write` permission). If that's unavailable or returns `forbidden`, ask the user to set it under **Paddle > Checkout > Checkout configuration > Default payment link**.
 - Two environment variables. Create the client-side token under **Paddle > My account > Settings > Authentication**, on the **Client-side tokens** tab:
 
 ```bash
@@ -291,7 +291,7 @@ When checkout completes, two things happen in parallel:
 
 ## Common pitfalls
 
-- **Something went wrong message** — typically means the domain wasn't added to the approved domains list in the Paddle dashboard, or the user didn't add a default payment link in the Paddle dashboard.
+- **Something went wrong message** — typically means there's no default payment link, or the domain isn't approved for checkout. With a Paddle MCP server, check both: `client.settings.checkoutUrl.get()` (`GET /settings/checkout-url`) should return a `default_url`, and in live `client.checkoutDomains.list()` (`GET /checkout-domains`) should list that URL's domain as `approved`. Without MCP, ask the user to check **Paddle > Checkout > Checkout configuration** and **Paddle > My account > Settings > Website approval**.
 - **`Paddle is not defined`** — you forgot to await `initializePaddle()` before calling `Paddle.Checkout.open()`. The promise resolves with the `Paddle` object; only then can you open checkout.
 - **Checkout doesn't render inline** — your `frameTarget` class name doesn't match a rendered element, or the element isn't in the DOM yet when `Checkout.open()` runs. Render the target first; open in a `useEffect`.
 - **Sandbox vs production drift** — `NEXT_PUBLIC_PADDLE_ENV` controls which environment Paddle.js talks to. If your client token is for sandbox but you set `NEXT_PUBLIC_PADDLE_ENV=production`, checkout will fail to load. Tokens and prices are environment-scoped — sandbox `pri_...` IDs don't exist in production.
