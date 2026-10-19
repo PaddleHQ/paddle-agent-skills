@@ -16,7 +16,7 @@
   "interface": {
     "displayName": "Paddle",
     "shortDescription": "Paddle Billing skills and MCP servers",
-    "longDescription": "Paddle Billing is the developer-first merchant of record for modern SaaS, AI, mobile app, and digital product businesses. This plugin bundles agent skills for the most common Paddle integration tasks (checkout, webhooks, subscription sync, customer portal, sandbox testing) and wires up the Paddle docs and API MCP servers so Codex can pull from the latest Paddle docs and act in your sandbox or live account.",
+    "longDescription": "Paddle Billing is the developer-first merchant of record for modern SaaS, AI, mobile app, and digital product businesses. This plugin bundles agent skills for the most common Paddle integration tasks (checkout, webhooks, subscription sync, customer portal, sandbox testing, account onboarding) and wires up the Paddle docs and API MCP servers so Codex can pull from the latest Paddle docs and act in your sandbox or live account.",
     "developerName": "Paddle",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
