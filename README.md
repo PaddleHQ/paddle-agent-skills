@@ -14,6 +14,7 @@ A batch of skills covering the most common Paddle integration tasks:
 - **[`paddle-catalog-setup`](skills/catalog-setup/SKILL.md)** — create the Paddle products and prices that other skills depend on.
 - **[`paddle-checkout-web`](skills/checkout-web/SKILL.md)** — add a Paddle Checkout (overlay or inline) to a Next.js app, with event handling and customer pre-fill.
 - **[`paddle-customer-portal`](skills/customer-portal/SKILL.md)** — mint authenticated customer portal sessions so users can self-serve subscriptions, payment methods, and invoices.
+- **[`paddle-onboarding`](skills/onboarding/SKILL.md)** — check your account's onboarding status in sandbox or live, see what's missing against the go-live checklist, and fix the gaps the API allows.
 - **[`paddle-pricing-pages`](skills/pricing-pages/SKILL.md)** — render country-localized prices using `Paddle.PricePreview()`, with billing frequency toggle and currency formatting.
 - **[`paddle-sandbox-testing`](skills/sandbox-testing/SKILL.md)** — exercise the integration end-to-end in the Paddle sandbox: test cards, webhook simulator, local tunnels.
 - **[`paddle-subscription-cancel`](skills/subscription-cancel/SKILL.md)** — build a "cancel at end of period" flow with the right ownership checks and webhook reconciliation.
