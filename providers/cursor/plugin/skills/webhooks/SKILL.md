@@ -28,6 +28,8 @@ Every design choice in this skill follows from these facts about how Paddle deli
 
 > The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). List methods return `{ pagination: { hasMore, estimatedTotal }, <resource>: [...] }`, not `data`. The array's key is the resource's API path segment, so it's kebab-case where the method path is camelCase: `(await client.products.list()).products`, `(await client.clientTokens.list())["client-tokens"]`. Page with `{ after: "<last_id>" }` while `pagination.hasMore` is true, not `.next()`. Lists that aren't paginated, like `client.currencies.list()`, return a plain array. Single-entity methods return the entity. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, and 32,000 characters of code.
 
+> The Paddle CLI (`paddle`, v0.2.0 or later) runs Paddle API operations from the terminal with the user's saved login. Resource commands mirror the API reference: `paddle products create` is "create a product". Run `paddle <resource> --help` to find a command, add `--schema` to a create or update command to see its request body, and use `paddle api <path>` for an endpoint without a command. **It starts in the live account**, so pass `--environment sandbox` unless the user is working in live. When an agent runs it, it returns the API's JSON (`data`, `meta`), and `meta.environment` names the account it used. Cancel and delete commands need `--confirm <id>`. Add it only after the user has agreed to that specific cancel or delete, and never use it to work around a refusal. `paddle api` writes aren't checked at all, so treat them the same way. Exit code `5` is a `403`: a missing permission, or a login for the other account. Exit code `7` is a validation error. If `paddle whoami` shows no login, ask the user to run `paddle login` themselves (sandbox takes an API key: `paddle login --environment sandbox --api-key …`), and never ask for a key in the chat. A live login with OAuth can change anything the user's Paddle role allows, so name each live change and wait for a yes before you run it. For CI/CD, set a live API key with only the permissions it needs as `PADDLE_API_KEY`. To install it, see [Paddle CLI](https://developer.paddle.com/sdks/cli.md).
+
 ## Prerequisites
 
 You need:
@@ -79,7 +81,23 @@ async (client) =>
   });
 ```
 
-The response includes `endpoint_secret_key`. A 409 `notification_setting_cannot_be_duplicate` means a destination with that URL already exists: find it in `(await client.notificationSettings.list())["notification-settings"]` and reuse it, or change it with `client.notificationSettings.update("ntfset_…", { ... })`, instead of creating another.
+The response includes `endpoint_secret_key`. A 409 `notification_setting_cannot_be_duplicate` means a destination with that URL already exists: find it in `(await client.notificationSettings.list())["notification-settings"]` and reuse it, or change it with `client.notificationSettings.update("ntfset_…", { ... })`, instead of creating another. A 400 `notification_maximum_active_settings_reached` means the account has reached its limit of active destinations: reuse one of the user's own destinations, or ask them which one to deactivate.
+
+With the Paddle CLI, send the same body to `paddle notification-settings create`. Append the secret straight to `.env.local` so it isn't printed in the terminal or the chat:
+
+```bash
+paddle --environment sandbox notification-settings create \
+  --jq '"PADDLE_NOTIFICATION_WEBHOOK_SECRET=" + .data.endpoint_secret_key' \
+  --json '{
+    "description": "Local dev",
+    "destination": "https://abc123.ngrok.app/api/webhook",
+    "type": "url",
+    "subscribed_events": ["transaction.completed", "subscription.created", "subscription.updated"],
+    "traffic_source": "all"
+  }' >> .env.local
+```
+
+Find the new destination's ID with `paddle --environment sandbox notification-settings list --jq '.data[] | {id, destination}'`, and change it later with `paddle notification-settings update ntfset_… --json '{ ... }'`.
 
 ## Step 2: Create a Paddle SDK helper
 
@@ -297,7 +315,7 @@ ngrok http 3000
 # Use the https URL as your notification destination URL: https://abc123.ngrok.app/api/webhook
 ```
 
-Real Paddle events from the sandbox will then hit your local route handler.
+Real Paddle events from the sandbox will then hit your local route handler. To resend one after you change your handler, find it with `paddle --environment sandbox notifications list --notification-setting-id ntfset_…` and run `paddle --environment sandbox notifications replay ntf_…`.
 
 **B. Use the webhook simulator.** The simulator sends to a notification destination, so localhost still needs a tunnel:
 
