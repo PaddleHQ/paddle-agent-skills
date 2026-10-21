@@ -21,19 +21,22 @@ The code-side go-live steps — live IDs and `api.paddle.com`, removing the sand
 
 - **Pick the environment.** Sandbox and live are separate, with separate settings, credentials, catalogs, and notification destinations — auditing one tells you nothing about the other. Use `paddle-sandbox` while the user is building and `paddle-live` when they're going live. If it's unclear, ask. When going live with both servers connected, read sandbox too: it's the reference for what live should mirror.
 - **Read before you write.** Run the whole audit with reads only, report, then propose fixes one at a time. Never change anything during the audit.
-- **Expect read-only live access.** `paddle-live` connected with OAuth starts with read access, so a live audit works straight away but live fixes need write permission. See [Permissions and `forbidden`](#permissions-and-forbidden).
+- **Expect read-only live access.** `paddle-live` connected with OAuth starts with read access, so a live audit works straight away but live fixes need write permission. The Paddle CLI logged in to live with OAuth can write straight away. See [Permissions and `forbidden`](#permissions-and-forbidden).
 
 ## Choose your method
 
 Pick the highest-ranked method that's available to you:
 
 1. **Paddle MCP server** — if `search` and `execute` tools from `paddle-sandbox` or `paddle-live` are in your toolset, use them. **Always prefer this.**
-2. **Direct API requests** — if MCP isn't available but the user has a `PADDLE_API_KEY` in their environment, give them commands to run (see [Without MCP](#without-mcp)). Never ask the user to paste an API key into the chat.
-3. **Dashboard (manual)** — if neither works, walk the user through the [go-live checklist](https://developer.paddle.com/build/go-live-checklist.md) and ask them to tell you what they see.
+2. **Paddle CLI** — if MCP isn't available but `paddle` is installed, run the audit with it yourself (see [With the CLI](#with-the-cli)).
+3. **Direct API requests** — if neither is available but the user has a `PADDLE_API_KEY` in their environment, give them commands to run (see [With direct API requests](#with-direct-api-requests)). Never ask the user to paste an API key into the chat.
+4. **Dashboard (manual)** — if none of these works, walk the user through the [go-live checklist](https://developer.paddle.com/build/go-live-checklist.md) and ask them to tell you what they see.
 
 If the user doesn't have a Paddle MCP server installed, surface it as a suggestion — point them at the [Paddle MCP server install guide](https://developer.paddle.com/sdks/ai/paddle-mcp.md).
 
 > The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). List methods return `{ pagination: { hasMore, estimatedTotal }, <resource>: [...] }`, not `data`. The array's key is the resource's API path segment, so it's kebab-case where the method path is camelCase: `(await client.products.list()).products`, `(await client.clientTokens.list())["client-tokens"]`. Page with `{ after: "<last_id>" }` while `pagination.hasMore` is true, not `.next()`. Lists that aren't paginated, like `client.currencies.list()`, return a plain array. Single-entity methods return the entity. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, and 32,000 characters of code.
+
+> The Paddle CLI (`paddle`, v0.2.0 or later) runs Paddle API operations from the terminal with the user's saved login. Resource commands mirror the API reference: `paddle products create` is "create a product". Run `paddle <resource> --help` to find a command, add `--schema` to a create or update command to see its request body, and use `paddle api <path>` for an endpoint without a command. **It starts in the live account**, so pass `--environment sandbox` unless the user is working in live. When an agent runs it, it returns the API's JSON (`data`, `meta`), and `meta.environment` names the account it used. Cancel and delete commands need `--confirm <id>`. Add it only after the user has agreed to that specific cancel or delete, and never use it to work around a refusal. `paddle api` writes aren't checked at all, so treat them the same way. Exit code `5` is a `403`: a missing permission, or a login for the other account. Exit code `7` is a validation error. If `paddle whoami` shows no login, ask the user to run `paddle login` themselves (sandbox takes an API key: `paddle login --environment sandbox --api-key …`), and never ask for a key in the chat. A live login with OAuth can change anything the user's Paddle role allows, so name each live change and wait for a yes before you run it. For CI/CD, set a live API key with only the permissions it needs as `PADDLE_API_KEY`. To install it, see [Paddle CLI](https://developer.paddle.com/sdks/cli.md).
 
 ## Step 1: Audit the account (read-only)
 
@@ -133,7 +136,33 @@ Optional reads, not on the checklist and never go-live blockers (all need only `
 
 Report the first two only if they're relevant — for example, the user has discounts but `discounts_enabled` is `false`.
 
-### Without MCP
+### With the CLI
+
+Run the same reads yourself, one command each, so a failed read doesn't stop the rest. Set `ENV` to the environment you're auditing. The `--jq` filter drops `endpoint_secret_key` so the signing secret doesn't end up in the output:
+
+```bash
+ENV=sandbox # live: production
+p() {
+  echo "== paddle $*"
+  paddle --environment "$ENV" "$@" \
+    --jq 'walk(if type == "object" then del(.endpoint_secret_key) else . end)'
+}
+p whoami
+p account get
+p products list --status active --include prices
+p client-tokens list --status active
+p settings checkout-url get
+p settings checkout-payment-methods get
+p settings tax get
+p settings balance-currency get
+p notification-settings list
+p checkout-domains list
+p verifications list --verification-type onboarding
+```
+
+`paddle whoami` covers the API access check: it shows the account and the login's permissions. A read that fails prints a JSON error with the Paddle error `code`, and exit code `5` means the login lacks that permission.
+
+### With direct API requests
 
 Give the user these reads to run with their own key. The `jq` filter drops `endpoint_secret_key` so the signing secret doesn't end up in the terminal or the chat:
 
@@ -212,6 +241,8 @@ async (client) => {
 }
 ```
 
+With the CLI, each fix is the matching `update` command with the same body, like `paddle settings checkout-url update --json '{"default_url": "https://example.com/checkout"}'`. Run `paddle settings checkout-url get` first and afterwards to show the before and after values.
+
 If a write returns `forbidden` and the user doesn't want to grant the permission, or the method isn't available, send them to the dashboard instead:
 
 - Default payment link and payment methods — **Paddle > Checkout > Checkout configuration**.
@@ -237,6 +268,7 @@ The MCP server acts with the permissions of whatever it authenticated with. Thro
 
 - **`paddle-sandbox`** authenticates with an API key. Ask the user to add the permission to the key under **Paddle > My account > Settings > Authentication**, or to create a key that has it.
 - **`paddle-live`** connected with OAuth starts read-only, so a `forbidden` on a write is expected until the user grants write access under **Paddle > Connectors > MCPs**. Permissions there are capped by their Paddle user's role. If `paddle-live` uses a live API key instead, it works like sandbox.
+- **The Paddle CLI** uses the user's saved login, and a missing permission is a `403` with exit code `5`. A sandbox login is an API key, so fix it like `paddle-sandbox`. A live login with OAuth has everything the user's Paddle role allows, including writes, so a live fix won't fail on permissions: the confirmation in [Step 3](#step-3-offer-fixes-the-api-allows) is the only check, so never skip it. A live login with an API key works like sandbox.
 - **During the audit**, a `forbidden` read is can't tell, not missing. Name the permission in the report.
 - **If the user won't grant a permission**, give them the dashboard location for that change instead (see [Step 3](#step-3-offer-fixes-the-api-allows)).
 
