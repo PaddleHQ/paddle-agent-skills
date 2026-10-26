@@ -1,6 +1,6 @@
 ---
 name: paddle-catalog-setup
-description: Create the Paddle products and prices that other Paddle skills depend on — try MCP tools first, fall back to a Node SDK seed script, or dictate dashboard steps as a last resort.
+description: Create the Paddle products and prices that other Paddle skills depend on — try MCP tools first, then the Paddle CLI, fall back to a Node SDK seed script, or dictate dashboard steps as a last resort.
 ---
 
 # Create Paddle products and prices
@@ -24,7 +24,7 @@ Before creating anything, agree on these with the user. **Do not guess.**
 - **Billing model** (per price). Recurring (subscription) requires a billing cycle (e.g. `month` / `year`) — `billing_cycle` in MCP body params, `billingCycle` in the SDK; one-time prices omit it. Trial periods are subscription-only — the API rejects them on one-time prices.
 - **Trial type** (recurring prices only). Ask whether the trial is free, paid, or cardless. Invalid trial setups return `400 bad_request` with the offending field in `errors`.
   - **Free** — `trial_period: { interval, frequency }`. The customer adds a payment method at checkout and pays nothing until the trial ends.
-  - **Paid** — add `trial_period.unit_price` (`{ amount, currency_code }`) for the trial charge. Its currency must match the base price. If the price has `unit_price_overrides`, add a `trial_period.unit_price_overrides` entry with the same `country_codes` for every one. Use the MCP (Method 1) or the API directly — the Node SDK doesn't support trial pricing yet.
+  - **Paid** — add `trial_period.unit_price` (`{ amount, currency_code }`) for the trial charge. Its currency must match the base price. If the price has `unit_price_overrides`, add a `trial_period.unit_price_overrides` entry with the same `country_codes` for every one. Use the MCP (Method 1), the CLI (Method 2), or the API directly — the Node SDK doesn't support trial pricing yet.
   - **Cardless** — `trial_period.requires_payment_method: false`, so the customer can start without a payment method. Cardless trials are in early access; without access, the API returns `400 bad_request`. A trial can't be both paid and cardless.
 - **Price name and quantity.** `description` is required and internal — customers never see it. `name` (optional, 1–150 characters) is shown to customers at checkout and on invoices, e.g. "Monthly". `quantity` limits how many can be bought at this price and defaults to 1–100; set `quantity: { minimum, maximum }` if you need a different range, e.g. for seats.
 - **Currency and amounts.** The unit price amount (`unit_price.amount` in MCP, `unitPrice.amount` in the SDK) is a string in lowest currency units. Cents for USD/EUR/GBP (`"1000"` = $10.00). **Whole units for the zero-decimal currencies — JPY, KRW, VND, and CLP** (`"1200"` = ¥1,200 / ₩1,200 / CLP$1,200, not ¥12 etc.). To check any currency, read `decimal_places` from `client.currencies.list()` (MCP; returns a plain array) or the public `GET /currencies` endpoint.
@@ -53,8 +53,9 @@ Only `saas` and `standard` are available without approval. The user requests oth
 Pick the highest-ranked method that's available to you:
 
 1. **Paddle MCP server** — if `search` and `execute` tools from a `paddle-sandbox` (or `paddle-live`) MCP server are in your toolset, use them. Fastest, no code for the user to run, results immediate. **Always prefer this.**
-2. **Node SDK seed script** — if MCP isn't available but the user has a `PADDLE_API_KEY` (or can generate one), generate a seed script for the user to run. Repeatable, version-controlled.
-3. **Dashboard (manual)** — if neither is workable, dictate click-by-click steps for the user to follow.
+2. **Paddle CLI** — if MCP isn't available but `paddle` is installed, run the commands yourself with the user's saved login. No code to add to the project.
+3. **Node SDK seed script** — if neither is available but the user has a `PADDLE_API_KEY` (or can generate one), generate a seed script for the user to run. Repeatable, version-controlled.
+4. **Dashboard (manual)** — if none of these is workable, dictate click-by-click steps for the user to follow.
 
 If a method fails midway (e.g. SDK call returns `forbidden` because the API key lacks permissions), fall back to the next method rather than retrying.
 
@@ -136,7 +137,31 @@ unit_price_overrides: [
 
 If the MCP `search` / `execute` tools aren't available, fall back to Method 2.
 
-## Method 2: Node SDK seed script
+## Method 2: Paddle CLI
+
+Check whether `paddle` is installed (`paddle --version`) and logged in (`paddle whoami --environment sandbox`). If yes, use it.
+
+> The Paddle CLI (`paddle`, v0.2.0 or later) runs Paddle API operations from the terminal with the user's saved login. Resource commands mirror the API reference: `paddle products create` is "create a product". Run `paddle <resource> --help` to find a command, add `--schema` to a create or update command to see its request body, and use `paddle api <path>` for an endpoint without a command. **It starts in the live account**, so pass `--environment sandbox` unless the user is working in live. When an agent runs it, it returns the API's JSON (`data`, `meta`), and `meta.environment` names the account it used. Cancel and delete commands need `--confirm <id>`. Add it only after the user has agreed to that specific cancel or delete, and never use it to work around a refusal. `paddle api` writes aren't checked at all, so treat them the same way. Exit code `5` is a `403`: a missing permission, or a login for the other account. Exit code `7` is a validation error. If `paddle whoami` shows no login, ask the user to run `paddle login` themselves (sandbox takes an API key: `paddle login --environment sandbox --api-key …`), and never ask for a key in the chat. A live login with OAuth can change anything the user's Paddle role allows, so name each live change and wait for a yes before you run it. For CI/CD, set a live API key with only the permissions it needs as `PADDLE_API_KEY`. To install it, see [Paddle CLI](https://developer.paddle.com/sdks/cli.md).
+
+Request bodies are the same snake_case JSON as the MCP examples above, so the trial, one-time, and regional pricing variants work unchanged. Create the product first, then each price with the product's ID. `--jq '.data.id'` prints just the new ID:
+
+```bash
+paddle --environment sandbox products create --jq '.data.id' \
+  --json '{"name": "Pro", "tax_category": "saas", "description": "For scaling teams."}'
+
+paddle --environment sandbox prices create --jq '.data.id' --json '{
+  "product_id": "pro_01h...",
+  "description": "Pro monthly USD",
+  "name": "Monthly",
+  "unit_price": { "amount": "1000", "currency_code": "USD" },
+  "billing_cycle": { "interval": "month", "frequency": 1 },
+  "trial_period": { "interval": "day", "frequency": 14 }
+}'
+```
+
+Report all created IDs back to the user. If they want to rerun the setup later, for example in a new sandbox account, save the commands as a script in their repo. If a command exits with code `5`, the login lacks `product.write` or `price.write`: ask the user to add them to their API key, or fall back to Method 4.
+
+## Method 3: Node SDK seed script
 
 Use this when the user has (or can install) `@paddle/paddle-node-sdk` and a `PADDLE_API_KEY`. You write the script; the user runs it.
 
@@ -212,13 +237,13 @@ unitPriceOverrides: [
 ],
 ```
 
-**Paid trials** — the Node SDK's `trialPeriod` type has no `unitPrice` yet, and price responses drop it. Create paid-trial prices with the MCP (Method 1) or a direct `POST /prices` call.
+**Paid trials** — the Node SDK's `trialPeriod` type has no `unitPrice` yet, and price responses drop it. Create paid-trial prices with the MCP (Method 1), the CLI (Method 2), or a direct `POST /prices` call.
 
-If the script fails with `forbidden` or `unauthorized`, the API key lacks the required permission scopes — ask the user to regenerate it with `product.write` and `price.write`. If it fails because the user can't or won't install the SDK, fall back to Method 3.
+If the script fails with `forbidden` or `unauthorized`, the API key lacks the required permission scopes — ask the user to regenerate it with `product.write` and `price.write`. If it fails because the user can't or won't install the SDK, fall back to Method 4.
 
-## Method 3: Dashboard (manual)
+## Method 4: Dashboard (manual)
 
-Last resort. Use when MCP and SDK paths are both blocked. Dictate the steps for the user to follow, then ask them to share the IDs.
+Last resort. Use when the MCP, CLI, and SDK paths are all blocked. Dictate the steps for the user to follow, then ask them to share the IDs.
 
 Tell the user:
 
@@ -244,7 +269,7 @@ After the user shares the IDs, update their app config (constants file, env vars
 
 Whichever method you used, before declaring this skill complete:
 
-1. **Confirm the products and prices exist.** Via MCP — one `execute` call: `client.products.list({ include: ["prices"] })`. Via SDK: `paddle.products.list({ include: ["prices"] })`. Or ask the user to check **Paddle > Catalog > Products** in the dashboard.
+1. **Confirm the products and prices exist.** Via MCP — one `execute` call: `client.products.list({ include: ["prices"] })`. Via CLI: `paddle --environment sandbox products list --include prices`. Via SDK: `paddle.products.list({ include: ["prices"] })`. Or ask the user to check **Paddle > Catalog > Products** in the dashboard.
 2. **Confirm the IDs you reported match.** Via MCP: `client.products.get(productId, { include: ["prices"] })` for each new product (note `productId` is a positional path param). Via SDK: `paddle.products.get(id, { include: ["prices"] })`. Check name + tax category.
 3. **Suggest the next step.** Recommend the user complete `checkout-web` next, using one of the new price IDs, to confirm the catalog actually works in checkout.
 

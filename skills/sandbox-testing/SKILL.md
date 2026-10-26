@@ -39,8 +39,8 @@ Sign up for the sandbox at [sandbox-login.paddle.com/signup](https://sandbox-log
 1. Set up at least one **product** with one **price** — see `catalog-setup` if you haven't done this yet.
 2. Go to **Paddle > My account > Settings > Authentication** and create:
    - A **client-side token** (on the **Client-side tokens** tab) for use in `Paddle.js`.
-   - A **server-side API key** (on the **API keys** tab) for the Node SDK. Give it the permissions this skill's API and MCP calls use: `notification_simulation.write` and `notification_simulation.read` (simulator), `notification.read` and `notification.write` (notification logs and replays), `client_token.write` if you create client-side tokens by API, and `checkout_settings.write` to check and set the default payment link.
-3. Check the sandbox default payment link is set — checkout won't open without one. If a Paddle MCP server is available, call `client.settings.checkoutUrl.get()` (`GET /settings/checkout-url`) on `paddle-sandbox`; a `null` `default_url` means it isn't set. Use a page on the user's own domain, not `localhost`. Sandbox doesn't need an approved domain. If the update returns `checkout_url_domain_not_approved`, add the domain under **Paddle > My account > Settings > Website approval**, where sandbox approves it straight away, and try again. Ask the user for the URL before setting it with `client.settings.checkoutUrl.update({ default_url: "https://example.com/checkout" })`, or have them set it under **Paddle > Checkout > Checkout configuration**.
+   - A **server-side API key** (on the **API keys** tab) for the Node SDK. Give it the permissions this skill's API and MCP calls use: `notification_simulation.write` and `notification_simulation.read` (simulator), `notification.read` and `notification.write` (notification logs and replays), `client_token.write` if you create client-side tokens by API, and `checkout_settings.write` to check and set the default payment link. To use the Paddle CLI with this key, ask the user to log it in to sandbox themselves: `paddle login --environment sandbox --api-key …`.
+3. Check the sandbox default payment link is set — checkout won't open without one. If a Paddle MCP server is available, call `client.settings.checkoutUrl.get()` (`GET /settings/checkout-url`) on `paddle-sandbox`; a `null` `default_url` means it isn't set. Use a page on the user's own domain, not `localhost`. Sandbox doesn't need an approved domain. If the update returns `checkout_url_domain_not_approved`, add the domain under **Paddle > My account > Settings > Website approval**, where sandbox approves it straight away, and try again. Ask the user for the URL before setting it with `client.settings.checkoutUrl.update({ default_url: "https://example.com/checkout" })`. With the Paddle CLI, use `paddle --environment sandbox settings checkout-url get` and `… settings checkout-url update --json '{"default_url": "…"}'`. Or have them set it under **Paddle > Checkout > Checkout configuration**.
 4. Note the IDs and set them in your local env:
 
 ```bash
@@ -115,6 +115,19 @@ Note `client.simulations.runs.create` is nested under `simulations` (not a top-l
 
 > The Paddle MCP exposes three tools per server (`search`, `execute`, `report_missing_tool`). Workflow: call `search` to confirm the exact method name and parameter shapes, then call `execute` with an async function that calls `client.<resource>.<operation>(...)`. **Method paths are camelCase** (`client.clientTokens.create`, `client.pricingPreview.preview`). **Body params and response fields are snake_case** (`tax_category`, `product_id`, `unit_price`, `currency_code`). List methods return `{ pagination: { hasMore, estimatedTotal }, <resource>: [...] }`, not `data`. The array's key is the resource's API path segment, so it's kebab-case where the method path is camelCase: `(await client.products.list()).products`, `(await client.clientTokens.list())["client-tokens"]`. Page with `{ after: "<last_id>" }` while `pagination.hasMore` is true, not `.next()`. Lists that aren't paginated, like `client.currencies.list()`, return a plain array. Single-entity methods return the entity. Chain multi-step workflows inside one `execute`; variables don't persist between calls. Hard caps: 50 API calls per execute, 30s timeout, and 32,000 characters of code.
 
+> The Paddle CLI (`paddle`, v0.2.0 or later) runs Paddle API operations from the terminal with the user's saved login. Resource commands mirror the API reference: `paddle products create` is "create a product". Run `paddle <resource> --help` to find a command, add `--schema` to a create or update command to see its request body, and use `paddle api <path>` for an endpoint without a command. **It starts in the live account**, so pass `--environment sandbox` unless the user is working in live. When an agent runs it, it returns the API's JSON (`data`, `meta`), and `meta.environment` names the account it used. Cancel and delete commands need `--confirm <id>`. Add it only after the user has agreed to that specific cancel or delete, and never use it to work around a refusal. `paddle api` writes aren't checked at all, so treat them the same way. Exit code `5` is a `403`: a missing permission, or a login for the other account. Exit code `7` is a validation error. If `paddle whoami` shows no login, ask the user to run `paddle login` themselves (sandbox takes an API key: `paddle login --environment sandbox --api-key …`), and never ask for a key in the chat. A live login with OAuth can change anything the user's Paddle role allows, so name each live change and wait for a yes before you run it. For CI/CD, set a live API key with only the permissions it needs as `PADDLE_API_KEY`. To install it, see [Paddle CLI](https://developer.paddle.com/sdks/cli.md).
+
+With the Paddle CLI, run the same steps as separate commands. The body is the same snake_case JSON:
+
+```bash
+paddle --environment sandbox simulations create --jq '.data.id' --json '{
+  "name": "Subscription created flow",
+  "type": "subscription_creation",
+  "notification_setting_id": "ntfset_..."
+}'
+paddle --environment sandbox simulation-runs create ntfsim_...
+```
+
 To use the simulator:
 
 1. In the dashboard, go to **Paddle > Events > Simulations**.
@@ -126,9 +139,25 @@ To use the simulator:
 
 The destination must have **Usage type** "Simulation" or "Both" (`traffic_source: "simulation"` or `"all"`) — "Platform" destinations can't be used. It must also be active and subscribed to each event type in the simulation; any event it can't receive is marked `aborted` and not sent. A "Simulation" destination gets no real events, so use "Both" for a local destination you also use for real checkouts.
 
-Each simulated event gets **one delivery attempt, with no retries**. Check results on the run in **Paddle > Events > Simulations**, or with `client.simulations.runsEvents.list(simulationId, runId)` — each event has a `status` (`success`, `failed`, `aborted`, `pending`) plus the request and response. Resend one with `client.simulations.runsEvents.replay(simulationId, runId, eventId)`.
+Each simulated event gets **one delivery attempt, with no retries**. Check results on the run in **Paddle > Events > Simulations**, or with `client.simulations.runsEvents.list(simulationId, runId)` — each event has a `status` (`success`, `failed`, `aborted`, `pending`) plus the request and response. Resend one with `client.simulations.runsEvents.replay(simulationId, runId, eventId)`. With the CLI, use `paddle simulation-run-events list <simulation_id> <run_id>` and `paddle simulation-run-events replay <simulation_id> <run_id> <event_id>`.
 
 The signature on a simulated event uses the **destination's secret**, so your normal verification code works without changes. If verification fails, the secret you've set in `PADDLE_NOTIFICATION_WEBHOOK_SECRET` doesn't match the destination you're simulating against.
+
+### Run simulations in CI
+
+To check a deployed preview on every change, run a simulation from CI with the Paddle CLI. Create the simulation once, pointed at a destination for the preview URL, then start a new run in each build and fail if any event wasn't delivered. Store a sandbox API key with the simulator permissions as a CI secret, and never commit it:
+
+```bash
+# CI secrets and variables: PADDLE_API_KEY (sandbox key), PADDLE_SIMULATION_ID (ntfsim_...)
+export PADDLE_ENVIRONMENT=sandbox
+RUN_ID=$(paddle simulation-runs create "$PADDLE_SIMULATION_ID" --jq '.data.id')
+while [ "$(paddle simulation-runs get "$PADDLE_SIMULATION_ID" "$RUN_ID" --jq '.data.status')" = pending ]; do
+  sleep 5
+done
+FAILED=$(paddle simulation-run-events list "$PADDLE_SIMULATION_ID" "$RUN_ID" \
+  --jq '[.data[] | select(.status != "success")] | length')
+[ "$FAILED" = 0 ] || { echo "$FAILED simulated events weren't delivered"; exit 1; }
+```
 
 ## Step 4: Tunnel localhost for real events
 

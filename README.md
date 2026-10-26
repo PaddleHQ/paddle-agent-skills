@@ -117,6 +117,18 @@ If a browser sign-in isn't practical (an automated environment, for example), `p
 
 With both servers connected, the agent sees two parallel toolsets. Be explicit in your prompts about which environment you mean. For example, "create a product in sandbox" routes to `paddle-sandbox`; "create the equivalent product in live" routes to `paddle-live`. Sandbox keys only authenticate against the sandbox URL, so a mismatch surfaces as an auth failure.
 
+## Use the Paddle CLI
+
+The skills that set up or check your Paddle account can also use the [Paddle CLI](https://developer.paddle.com/sdks/cli) (`paddle`, v0.2.0 or later). If the MCP servers aren't connected but `paddle` is installed and logged in, the agent runs the commands itself with your saved login. The CLI is also the way to run Paddle tasks from scripts and CI/CD pipelines, like the webhook simulator check in `sandbox-testing`.
+
+The CLI starts in your live account, so log in to sandbox with an API key:
+
+```bash
+paddle login --environment sandbox --api-key YOUR_SANDBOX_API_KEY
+```
+
+A live login with OAuth gives the CLI everything your Paddle user's role allows, including changes, so the skills ask before every live change. For CI/CD, use an API key with only the permissions the pipeline needs, set as `PADDLE_API_KEY` with `PADDLE_ENVIRONMENT`.
+
 ## Use the skills outside a plugin
 
 Skills also work in any agentic tool that supports the agent-skills format. Use the [`skills` CLI](https://github.com/vercel-labs/skills) to add them to your project:
