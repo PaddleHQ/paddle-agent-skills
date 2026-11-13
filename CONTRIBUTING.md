@@ -28,6 +28,27 @@ The marketplace files at the repo root point at the matching provider folder. Ea
 - Cursor: `.cursor-plugin/plugin.json` + `mcp.json` (no leading dot, auto-discovered) + `rules/`
 - Codex: `.codex-plugin/plugin.json` + `.mcp.json` + `assets/paddle-logo.svg`
 
+## Submitting to the OpenAI plugin directory
+
+The Codex plugin is also the package for the plugin directory that ChatGPT and Codex share. The listing, review test cases, and release notes live under `interface` and `extensions.com.openai` in [`providers/codex/plugin/.codex-plugin/plugin.json`](providers/codex/plugin/.codex-plugin/plugin.json). Only `paddle-live` is connected for review, and its OAuth settings are under its `extensions.com.openai.auth` entry in [`providers/codex/plugin/.mcp.json`](providers/codex/plugin/.mcp.json).
+
+To build the ZIP for upload, run:
+
+```sh
+pnpm run pack:openai
+```
+
+This syncs the skills, then writes `dist/paddle-openai-plugin.zip` from the files tracked in `providers/codex/plugin/`. The ZIP's `.mcp.json` declares only `paddle-live`. The script needs the `zip` command.
+
+Upload the ZIP at [platform.openai.com/plugins](https://platform.openai.com/plugins). Before you upload:
+
+- Your OpenAI organization must be verified, and you need to be its owner or have the Apps Management Write role.
+- The MCP server's domain must be verified by serving OpenAI's challenge token at `https://mcp.paddle.com/.well-known/openai-apps-challenge`.
+
+Reviewer credentials go in the dashboard's review details form, never in the package. The demo video URL is required for review. Add it in the dashboard or as `review.demo_recording_url`.
+
+When you change the listing, review metadata, or skills, bump `version` in `plugin.json` and upload a new ZIP. Changes to the MCP server's tools are picked up from the server without a new upload.
+
 ## Editing skills
 
 Always edit files in [`skills/`](skills) at the repo root. Never edit the copies under `providers/*/plugin/skills/` — they're derived artifacts.

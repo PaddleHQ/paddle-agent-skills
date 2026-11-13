@@ -10,7 +10,8 @@
   "scripts": {
     "format": "prettier --write \"**/*.{md,json,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{md,json,yml,yaml}\"",
-    "sync-skills": "node scripts/sync-skills.mjs"
+    "sync-skills": "node scripts/sync-skills.mjs",
+    "pack:openai": "node scripts/sync-skills.mjs && node scripts/pack-openai-plugin.mjs"
   },
   "devDependencies": {
     "prettier": "^3.8.3"

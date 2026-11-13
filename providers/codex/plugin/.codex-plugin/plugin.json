@@ -1,7 +1,7 @@
 {
   "name": "paddle",
-  "version": "0.1.0",
-  "description": "Paddle Billing skills and MCP servers for Codex.",
+  "version": "0.2.0",
+  "description": "Paddle Billing skills and MCP servers for ChatGPT and Codex.",
   "author": {
     "name": "Paddle",
     "email": "team-dx@paddle.com",
@@ -15,16 +15,80 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Paddle",
-    "shortDescription": "Paddle Billing skills and MCP servers",
-    "longDescription": "Paddle Billing is the developer-first merchant of record for modern SaaS, AI, mobile app, and digital product businesses. This plugin bundles agent skills for the most common Paddle integration tasks (checkout, webhooks, subscription sync, customer portal, sandbox testing, account onboarding) and wires up the Paddle docs and API MCP servers so Codex can pull from the latest Paddle docs and act in your sandbox or live account.",
+    "shortDescription": "Billing and payments for SaaS",
+    "longDescription": "Paddle Billing is the developer-first merchant of record for modern SaaS, AI, mobile app, and digital product businesses. Connect your Paddle account to look up customers, subscriptions, and transactions, chart revenue metrics, and investigate billing issues. Read access is granted by default, and you can grant write access from Paddle > Connectors > MCPs. The plugin also includes agent skills for the most common Paddle integration tasks, like checkout, webhooks, subscription sync, the customer portal, sandbox testing, and account onboarding.",
     "developerName": "Paddle",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://www.paddle.com",
+    "supportURL": "https://developer.paddle.com",
     "privacyPolicyURL": "https://www.paddle.com/legal/privacy",
     "termsOfServiceURL": "https://www.paddle.com/legal/terms",
+    "defaultPrompt": [
+      "Chart my revenue for the last 12 months",
+      "Which subscriptions are past due?",
+      "Add Paddle Checkout to my Next.js app"
+    ],
     "brandColor": "#0E1414",
+    "brandColorDark": "#FFF800",
     "composerIcon": "./assets/paddle-logo.svg",
     "logo": "./assets/paddle-logo.svg"
+  },
+  "extensions": {
+    "com.openai": {
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Charts a revenue metric from the connected Paddle account.",
+              "prompt": "Show me a chart of my revenue for the last 6 months.",
+              "tools_triggered": "show_metrics_chart",
+              "expected_behavior": "Draws an interactive revenue chart for the last 6 months and summarizes the trend in a sentence or two."
+            },
+            {
+              "description": "Finds subscriptions with failed payments.",
+              "prompt": "Which of my subscriptions are past due?",
+              "tools_triggered": "search, execute",
+              "expected_behavior": "Lists subscriptions with a past_due status, with each subscription ID, customer, and next billing date. Says so if there are none."
+            },
+            {
+              "description": "Summarizes a customer's billing history.",
+              "prompt": "Find the customer with the email reviewer@example.com and summarize their subscriptions and recent transactions.",
+              "tools_triggered": "search, execute",
+              "expected_behavior": "Finds the customer by email, then lists their subscriptions with status and plan, and their most recent transactions with totals and status. Says so if no customer matches."
+            },
+            {
+              "description": "Lists the product catalog.",
+              "prompt": "List my active products and their prices.",
+              "tools_triggered": "search, execute",
+              "expected_behavior": "Lists active products with their active prices, showing amounts formatted in each price's currency and the billing interval for recurring prices."
+            },
+            {
+              "description": "Investigates a failed payment.",
+              "prompt": "Show my past due transactions and explain why the latest payment attempt on each one failed.",
+              "tools_triggered": "search, execute",
+              "expected_behavior": "Lists past due transactions and explains each failure using the error code from the transaction's latest payment attempt. Makes no changes to the account."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Unrelated request.",
+              "prompt": "What's the weather like in London today?"
+            },
+            {
+              "description": "Translation request.",
+              "prompt": "How do I say 'thank you for your order' in Spanish?"
+            },
+            {
+              "description": "General writing request that mentions subscriptions.",
+              "prompt": "Write a short poem about subscription renewals."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "release_notes": "First release in the plugin directory. Connect your Paddle account to query customers, subscriptions, transactions, and revenue metrics, and use agent skills for common Paddle integration tasks."
+      }
+    }
   }
 }
