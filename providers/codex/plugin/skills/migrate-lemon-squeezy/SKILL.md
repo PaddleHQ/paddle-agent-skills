@@ -27,6 +27,7 @@ Pair with:
 - **What this skill can't do.** It never moves saved payment details. Paddle-assisted migration is for eligible stores: the user requests it, and a migration specialist confirms eligibility and arranges the transfer of card details, as the guide describes. Subscriptions not paid by card, such as PayPal or Cash App Pay, can't be transferred, and neither can rows the specialist turns down: those customers complete a new Paddle checkout, then the user cancels their Lemon Squeezy subscription.
 - **Read-only against Lemon Squeezy.** Every call to the Lemon Squeezy API in this skill is a `GET`. Don't cancel, update, or delete anything there; cancellation after cutover is the user's decision, made per the guide.
 - **Never print the Lemon Squeezy API key.** Read it from `LEMON_SQUEEZY_API_KEY`, never log it, never write it to a file, and never ask the user to paste it into the chat.
+- **Not run against a live store.** The scripts match the Lemon Squeezy [API reference](https://docs.lemonsqueezy.com/api) as of November 2026, but they haven't been run against a real store. If a request fails, or a field is missing or `null` where a script expects a value, read that object's page in the API reference, fix the type and the script to match, and tell the user what differed. Don't guess at field names, and don't drop rows silently: anything a script can't place goes in `needs-fixing.txt`.
 
 ## Decide with the user first
 
@@ -147,7 +148,7 @@ main().catch((e) => {
 });
 ```
 
-Orders are included because a subscription's currency comes from its order, and discount redemptions because they're how you find which subscriptions carry a discount. With more than one store, propose the catalog for the agreed store only: products, discounts, and license keys carry a `store_id`; variants and prices don't, so follow them through `product_id` and `variant_id`.
+Before going further, open the saved file and compare one subscription, one order, and one price against the field names in this step and Step 6; the API reference settles any difference. Orders are included because a subscription's currency comes from its order, and discount redemptions because they're how you find which subscriptions carry a discount. With more than one store, propose the catalog for the agreed store only: products, discounts, and license keys carry a `store_id`; variants and prices don't, so follow them through `product_id` and `variant_id`.
 
 Then propose the Paddle catalog, variant by variant, and confirm it with the user before Step 3. Read pricing from the Price objects, not the deprecated price fields on variants:
 
@@ -168,7 +169,7 @@ Then propose the Paddle catalog, variant by variant, and confirm it with the use
 | `tax_code` `saas`, `eservice`, `ebook`                                                                                                                 | `tax_category`: `saas` stays `saas`; `ebook` becomes `ebooks`, which needs approval; `eservice` becomes `saas`, `standard`, or `digital-goods` (needs approval) depending on what's sold, so ask. See `catalog-setup`. |
 | Discounts                                                                                                                                              | See "Discounts" below.                                                                                                                                                                                                 |
 
-Amounts are in the smallest currency unit on both sides, so copy `unit_price` into `unit_price.amount` as a string. Lemon Squeezy variants have one price in one currency; add `unit_price_overrides` in Paddle only if the user wants country-specific prices.
+Amounts are in the smallest currency unit on both sides, so copy `unit_price` into `unit_price.amount` as a string. `unit_price` is `null` on graduated and volume prices, where the amounts are in `tiers`, and on usage-based prices, where it's `unit_price_decimal`; both are flagged rows above. Lemon Squeezy variants have one price in one currency; add `unit_price_overrides` in Paddle only if the user wants country-specific prices.
 
 **Discounts.** `amount_type` `percent` or `fixed` becomes `type` `percentage` or `flat` (with `currency_code`); `expires_at`, `max_redemptions`, and `is_limited_to_products` become `expires_at`, `usage_limit`, and `restrict_to` with price or product IDs. For `duration`: `once` is the default; `forever` is `recur: true`; `repeating` is `recur: true` with `maximum_recurring_intervals`, which counts billing periods, so divide `duration_in_months` by the months in the price's billing cycle and flag any that don't divide evenly. Keep the same `code` where it fits Paddle's rule (letters and numbers only, up to 32 characters, not case-sensitive); flag codes that don't.
 
