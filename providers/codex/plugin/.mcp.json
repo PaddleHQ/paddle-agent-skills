@@ -7,7 +7,17 @@
     },
     "paddle-live": {
       "type": "http",
-      "url": "https://mcp.paddle.com/mcp"
+      "url": "https://mcp.paddle.com/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": {
+              "mode": "cimd"
+            }
+          }
+        }
+      }
     },
     "paddle-sandbox": {
       "type": "http",
