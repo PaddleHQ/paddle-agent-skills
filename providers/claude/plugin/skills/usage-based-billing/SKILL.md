@@ -1,6 +1,6 @@
 ---
 name: paddle-usage-based-billing
-description: Add Paddle usage-based billing (early access) to a Next.js app — early access check, usage balance units, meters, price allowances, usage events, balance gating, and `usage_balance.depleted`, using the Paddle API directly.
+description: Add Paddle usage-based billing (early access) to a Next.js app — early access check, usage balance units, meters, price allowances, usage events, balance gating, and `usage_balance.depleted`, using the Paddle Node SDK, with direct API calls for one-time setup.
 ---
 
 # Add usage-based billing to a Next.js app (early access)
@@ -24,8 +24,12 @@ Read this first. These facts change how you build the integration.
 
 - **Get the latest version of this skill before you start.** Early access (beta) changes often, so this copy might be out of date. Fetch the latest version and follow it instead if it's different. If you can't, continue with this copy, and suggest the user updates their Paddle plugin or skills.
 - **Usage-based billing is in early access (beta).** Only accounts in the early access program can use it, and fields and behavior may change before general release. Accounts apply at [Set up usage-based billing](https://developer.paddle.com/build/usage-based-billing).
-- **The Paddle MCP servers don't include usage-based billing operations during early access (beta).** Don't `search` the MCP for meter, usage event, or usage balance tools, and don't fake metering with custom items or one-time charges. Call the Paddle API with `fetch`, as shown below.
-- **The Paddle Node SDK doesn't support usage-based billing yet.** It has no `paddle.meters` or `paddle.usageEvents`, and its price types don't include `allowances`: TypeScript rejects the field on `paddle.prices.create()`, and the SDK's `Price` objects leave it out of responses. Use `fetch` for every call in this skill. Use the SDK only to verify webhooks.
+- **The Paddle MCP servers don't include usage-based billing operations during early access (beta).** Don't `search` the MCP for meter, usage event, or usage balance tools, and don't fake metering with custom items or one-time charges. Use the Node SDK and API helper, as shown below.
+- **The Paddle Node SDK supports usage-based billing from v3.11.0.** Use it for everything your app does at runtime:
+  - `paddle.usageEvents.create()` to send usage, and `generateEventKey()` or `deterministicEventKey()` to create event keys.
+  - `paddle.usageBalances.list()` and `.get()` to read a customer's balances.
+  - `paddle.meters` and `paddle.usageBalanceUnits` to list and get your setup.
+- **The SDK doesn't cover everything yet.** It can't create or update meters or usage balance units. Its price types don't include `allowances`, so TypeScript rejects the field on `paddle.prices.create()` and the SDK's `Price` objects leave it out of responses. `usage_balance.depleted` isn't in its `EventName` enum either. Use the small `fetch` helper in Step 1 for one-time setup and for reading allowances, and handle the webhook as shown in Step 7.
 - **Paddle never blocks usage during early access (beta).** When a balance runs out, Paddle keeps recording usage as overage and doesn't bill for it. Your app decides what customers can do.
 
 ## How usage-based billing works
@@ -92,7 +96,7 @@ You need:
 
 - A Paddle account in usage-based billing early access. Step 2 checks this.
 - An API key with these permissions: `usage_balance_unit.write`, `meter.write`, `price.write`, `usage_event.write`, and `usage_balance.read`. Each `write` permission includes `read`.
-- `@paddle/paddle-node-sdk` 2.5 or later (v3 recommended) for webhooks. Earlier versions return `null` for event types they don't know, so `usage_balance.depleted` is silently lost.
+- `@paddle/paddle-node-sdk` 3.11.0 or later. Earlier versions have no `paddle.usageEvents`, `paddle.usageBalances`, or `paddle.meters`. Install the latest version: `npm install @paddle/paddle-node-sdk@latest`.
 
 ```bash
 NEXT_PUBLIC_PADDLE_ENV=sandbox             # or "production"
@@ -102,13 +106,32 @@ PADDLE_NOTIFICATION_WEBHOOK_SECRET=pdl_ntfset_...
 
 Run the one-off scripts in this skill with `node --env-file=.env.local --import tsx scripts/<name>.ts`. `tsx` on its own doesn't load `.env.local`.
 
-## Step 1: Create an API helper
+## Step 1: Set up the SDK and an API helper
 
-Every call in this skill goes through one server-side helper. Sandbox and live use different base URLs, and a sandbox key only works against the sandbox API.
+Use the `getPaddleInstance()` helper from the `webhooks` skill for SDK calls. It reads `PADDLE_API_KEY` and `NEXT_PUBLIC_PADDLE_ENV`, so sandbox keys go to the sandbox API:
+
+```ts
+// utils/paddle/get-paddle-instance.ts
+import { Environment, LogLevel, Paddle, type PaddleOptions } from "@paddle/paddle-node-sdk";
+
+export function getPaddleInstance() {
+  const options: PaddleOptions = {
+    environment: (process.env.NEXT_PUBLIC_PADDLE_ENV as Environment) ?? Environment.sandbox,
+    logLevel: LogLevel.error,
+  };
+  if (!process.env.PADDLE_API_KEY) {
+    throw new Error("PADDLE_API_KEY is not set");
+  }
+  return new Paddle(process.env.PADDLE_API_KEY, options);
+}
+```
+
+The SDK can't create usage balance units, meters, or prices with allowances, or read allowances back. For those calls only, add a small `fetch` helper. Sandbox and live use different base URLs, and a sandbox key only works against the sandbox API.
 
 ```ts
 // utils/paddle/api.ts
 // Server-side only. Never import this from a client component.
+// Only for calls the SDK doesn't support yet: setup, and reading price allowances.
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_PADDLE_ENV === "production"
@@ -121,7 +144,6 @@ export class PaddleApiError extends Error {
     public code: string,
     message: string,
     public requestId?: string,
-    public retryAfterSeconds?: number, // set on 429 responses
   ) {
     super(message);
   }
@@ -143,13 +165,11 @@ export async function paddleApi<T>(
 
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const retryAfter = Number(response.headers.get("Retry-After"));
     throw new PaddleApiError(
       response.status,
       json?.error?.code ?? "unknown",
       json?.error?.detail ?? response.statusText,
       json?.meta?.request_id,
-      retryAfter > 0 ? retryAfter : undefined,
     );
   }
   return json as T;
@@ -158,11 +178,12 @@ export async function paddleApi<T>(
 
 ## Step 2: Check early access
 
-Before building anything, call `GET /meters`. The usage-based billing API key permissions only appear in the Paddle dashboard for accounts in early access, so this call tells you whether the account and the key are set up. Paddle returns `403` for both permission and authentication problems, so branch on the error `code`:
+Before building anything, list meters. The usage-based billing API key permissions only appear in the Paddle dashboard for accounts in early access, so this call tells you whether the account and the key are set up. Paddle returns `403` for both permission and authentication problems, so branch on the error `code`:
 
 ```ts
 // scripts/check-usage-billing-access.ts
-import { paddleApi, PaddleApiError } from "@/utils/paddle/api";
+import { ApiError } from "@paddle/paddle-node-sdk";
+import { getPaddleInstance } from "@/utils/paddle/get-paddle-instance";
 
 const AUTH_ERRORS = [
   "invalid_token",
@@ -173,10 +194,10 @@ const AUTH_ERRORS = [
 
 async function main() {
   try {
-    await paddleApi("/meters?per_page=1");
+    await getPaddleInstance().meters.list({ perPage: 1 }).next();
     console.log("Usage-based billing is available for this account and API key.");
   } catch (error) {
-    if (!(error instanceof PaddleApiError)) throw error;
+    if (!(error instanceof ApiError)) throw error;
 
     if (error.code === "forbidden") {
       console.log(
@@ -198,11 +219,11 @@ main().catch((error) => {
 });
 ```
 
-If the account isn't in early access, tell the user to apply using the tutorial, and stop there.
+If the account isn't in early access, tell the user to apply using the tutorial, and stop there. If `paddle.meters` is `undefined`, the SDK is older than 3.11.0, so upgrade it.
 
 ## Step 3: Create a unit, meter, and price
 
-This is one-time setup. Create prices with allowances using the API helper, not the SDK or `catalog-setup`'s seed script. Create the unit first, then the meter and price that use it:
+This is one-time setup. The SDK can't create units or meters, or send `allowances`, so use the API helper, not the SDK or `catalog-setup`'s seed script. Create the unit first, then the meter and price that use it:
 
 ```ts
 // scripts/setup-usage-billing.ts
@@ -269,25 +290,19 @@ These prices can't have trials, so `subscription.created` arrives with `status: 
 
 ```ts
 // utils/paddle/usage.ts
-import { paddleApi, PaddleApiError } from "@/utils/paddle/api";
-
-export type UsageBalance = {
-  id: string;
-  usage_balance_unit_id: string;
-  balance: {
-    used: { total: string };
-    remaining: { total: string };
-    overage: { total: string; started_at?: string };
-  };
-};
+import { ApiError, type UsageBalance } from "@paddle/paddle-node-sdk";
+import { getPaddleInstance } from "@/utils/paddle/get-paddle-instance";
 
 // Returns null if the customer has no usage balance for this unit. One page is enough:
 // customers have one usage balance for each unit.
-export async function getUsageBalance(customerId: string, usageBalanceUnitId: string) {
-  const result = await paddleApi<{ data: UsageBalance[] }>(
-    `/customers/${customerId}/usage-balances?per_page=200`,
-  );
-  return result.data.find((b) => b.usage_balance_unit_id === usageBalanceUnitId) ?? null;
+export async function getUsageBalance(
+  customerId: string,
+  usageBalanceUnitId: string,
+): Promise<UsageBalance | null> {
+  const usageBalances = await getPaddleInstance()
+    .usageBalances.list(customerId, { perPage: 200 })
+    .next();
+  return usageBalances.find((b) => b.usageBalanceUnitId === usageBalanceUnitId) ?? null;
 }
 
 // Run from a queued job after subscription.created. Retries with backoff.
@@ -301,6 +316,8 @@ export async function confirmUsageBalance(customerId: string, usageBalanceUnitId
 }
 ```
 
+The SDK returns camelCase fields, like `usageBalanceUnitId` and `balance.overage.startedAt`. Amounts are decimal strings, like the API.
+
 For a customer's first subscription with this unit, `remaining.total` should equal the allowance `amount` multiplied by the item quantity, and `used.total` should be `"0"`. If the balance never appears:
 
 - **The price has no allowances.** Get it with `GET /prices/{price_id}` and check `allowances` isn't empty.
@@ -310,16 +327,31 @@ For a customer's first subscription with this unit, `remaining.total` should equ
 
 Don't call Paddle in the middle of the customer's request. Instead:
 
-1. **Write an outbox row in the same database transaction as the metered work**, with `event_key` set to your own ID for the usage and `occurred_at` captured once, when the usage happened. If the work rolls back, so does the usage.
-2. **Send pending rows from a worker**, like a cron-triggered route handler, one event per request. Run it often, and alert if rows stay `pending`, since Paddle rejects events more than 60 days old.
-3. **Update each row from the result.** Mark `accepted` events `sent`. Retry network errors, `5xx` responses, `429` responses, and events rejected with `internal_error`, with the same `event_key` and `occurred_at`. Mark other rejections `failed`, with the error code, for review.
-4. **Stop the run on a `429`.** Paddle [rate limits API requests](https://developer.paddle.com/api-reference/about/rate-limiting) by IP address and blocks further requests until `Retry-After` passes, so leave the remaining rows `pending` and resume after `retryAfterSeconds`.
+1. **Write an outbox row in the same database transaction as the metered work**, with an `event_key` for the usage and `occurred_at` captured once, when the usage happened. If the work rolls back, so does the usage.
+2. **Send pending rows from a worker**, like a cron-triggered route handler, in batches of up to 100 with `paddle.usageEvents.create()`. Run it often, and alert if rows stay `pending`, since Paddle rejects events more than 60 days old.
+3. **Update rows from the result.** `create()` resolves once Paddle accepts the whole batch, so mark every row in it `sent`. If it throws, use `sendUsageEvents()` below to decide which rows to retry and which to mark `failed` for review.
+4. **Stop the run on a `429`.** Paddle [rate limits API requests](https://developer.paddle.com/api-reference/about/rate-limiting) by IP address and blocks further requests until `Retry-After` passes, so leave the remaining rows `pending` and resume after `retryAfter` seconds. The SDK doesn't retry for you.
 
 Next.js `after()` on its own isn't durable: if the process stops, the usage is lost. Use it to trigger the worker sooner, not instead of the outbox.
 
+Create event keys with the SDK. Use `deterministicEventKey()` when the usage has an ID in your system, like a request or job ID. The same parts always give the same key, so a duplicate insert of the same usage hits the outbox's primary key instead of counting twice. Otherwise, use `generateEventKey()`:
+
+```ts
+const paddle = getPaddleInstance();
+
+// From an ID you already have. The parts must be unique to this usage.
+const eventKey = await paddle.usageEvents.deterministicEventKey("api_call", requestId);
+
+// Or a random, time-sortable key.
+const randomEventKey = paddle.usageEvents.generateEventKey({ prefix: "api_call" });
+
+// INSERT INTO usage_events (event_key, customer_id, action, quantity, occurred_at)
+// VALUES ($1, $2, 'api_call', '1', $3) ON CONFLICT (event_key) DO NOTHING
+```
+
 ```ts
 // utils/paddle/usage.ts (continued)
-type UsageEventRow = {
+export type UsageEventRow = {
   eventKey: string;
   customerId: string;
   action: string;
@@ -327,67 +359,104 @@ type UsageEventRow = {
   occurredAt: string;
 };
 
-type UsageEventResponse = {
-  data: {
-    events: Array<{ event_key: string; status: "accepted" | "rejected"; error?: { code: string } }>;
-  };
+export type SendResult = {
+  sent: string[]; // event keys Paddle accepted
+  retry: string[]; // leave pending and send again unchanged
+  failed: Array<{ eventKey: string; code: string; message?: string }>; // for review
+  // Set when the worker should stop this run: rate limited, or a key or permission problem.
+  stop?: { code: string; retryAfterSeconds: number };
 };
 
-type SendResult = {
-  outcome: "sent" | "retry" | "failed";
-  code?: string;
-  retryAfterSeconds?: number; // set when rate limited: stop the run until it passes
-};
-
+export const MAX_BATCH_SIZE = 100;
 const QUANTITY = /^(0|[1-9]\d{0,34})(\.\d{1,9})?$/;
+// Paddle rejects events more than 60 days old. Leave a margin for the request itself.
+const MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000 - 5 * 60 * 1000;
+const EVENT_INDEX = /^events\[(\d+)\]/;
 
-export async function sendUsageEvent(row: UsageEventRow): Promise<SendResult> {
-  // Quantities must be greater than zero, with up to 9 decimal places and no leading zeros.
-  // Don't build them with String(number): 0.1 + 0.2 becomes "0.30000000000000004", which
-  // Paddle rejects.
-  if (!QUANTITY.test(row.quantity) || Number(row.quantity) <= 0) {
-    return { outcome: "failed", code: "invalid_quantity" };
+// Sends up to 100 rows. Paddle accepts or rejects the batch as a whole.
+export async function sendUsageEvents(rows: UsageEventRow[]): Promise<SendResult> {
+  const result: SendResult = { sent: [], retry: [], failed: [] };
+
+  const batch: UsageEventRow[] = [];
+  for (const row of rows.slice(0, MAX_BATCH_SIZE)) {
+    // Quantities must be greater than zero, with up to 9 decimal places and no leading zeros.
+    // Don't build them with String(number): 0.1 + 0.2 becomes "0.30000000000000004", which
+    // Paddle rejects.
+    if (!QUANTITY.test(row.quantity) || Number(row.quantity) <= 0) {
+      result.failed.push({ eventKey: row.eventKey, code: "invalid_quantity" });
+    } else if (Date.now() - Date.parse(row.occurredAt) > MAX_AGE_MS) {
+      // One bad event rejects the whole batch, so remove events Paddle can't accept.
+      // If an earlier attempt was accepted, it still counts.
+      result.failed.push({ eventKey: row.eventKey, code: "occurred_at_too_old" });
+    } else {
+      batch.push(row);
+    }
   }
+  if (batch.length === 0) return result;
 
+  const keys = batch.map((row) => row.eventKey);
   try {
-    const result = await paddleApi<UsageEventResponse>("/usage-events", {
-      method: "POST",
-      body: {
-        // One event per request during early access (beta). More than one returns a 400.
-        events: [
-          {
-            event_key: row.eventKey,
-            customer_id: row.customerId,
-            action: row.action,
-            quantity: row.quantity,
-            occurred_at: row.occurredAt,
-          },
-        ],
-      },
-    });
-    const [event] = result.data.events;
-    if (event.status === "accepted") return { outcome: "sent" };
-    const code = event.error?.code ?? "rejected";
-    return { outcome: code === "internal_error" ? "retry" : "failed", code };
+    await getPaddleInstance().usageEvents.create({ events: batch });
+    result.sent = keys;
+    return result;
   } catch (error) {
-    if (error instanceof PaddleApiError && error.status === 429) {
-      return {
-        outcome: "retry",
-        code: error.code,
-        retryAfterSeconds: error.retryAfterSeconds ?? 60,
-      };
+    // Network errors, timeouts, and non-JSON responses: some events may have been recorded.
+    if (!(error instanceof ApiError)) {
+      result.retry = keys;
+      return result;
     }
-    if (error instanceof PaddleApiError && error.status < 500) {
-      return { outcome: "failed", code: error.code };
+
+    if (error.code === "too_many_requests") {
+      result.retry = keys;
+      result.stop = { code: error.code, retryAfterSeconds: error.retryAfter ?? 60 };
+      return result;
     }
-    return { outcome: "retry" }; // network error or 5xx: resend unchanged
+
+    // 5xx: some events may have been recorded. Resending unchanged is safe.
+    if (error.type === "api_error") {
+      result.retry = keys;
+      return result;
+    }
+
+    // 400: Paddle recorded nothing. errors[].field names each bad event by its position,
+    // like events[1].occurred_at. Fail those and send the rest again next run.
+    if (error.code === "bad_request") {
+      const bad = new Map<number, string>();
+      for (const fieldError of error.errors ?? []) {
+        const index = fieldError.field.match(EVENT_INDEX)?.[1];
+        if (index !== undefined) bad.set(Number(index), fieldError.message);
+      }
+      if (bad.size === 0) {
+        // Not tied to one event, so the batch itself is wrong. Don't resend it as-is.
+        result.failed = [
+          ...result.failed,
+          ...keys.map((eventKey) => ({ eventKey, code: error.code, message: error.detail })),
+        ];
+        return result;
+      }
+      batch.forEach((row, index) => {
+        const message = bad.get(index);
+        if (message === undefined) result.retry.push(row.eventKey);
+        else result.failed.push({ eventKey: row.eventKey, code: error.code, message });
+      });
+      return result;
+    }
+
+    // Authentication or permission errors: the key or account needs fixing, not the events.
+    result.retry = keys;
+    result.stop = { code: error.code, retryAfterSeconds: 300 };
+    return result;
   }
 }
 ```
 
-- **Paddle counts an event once for each `event_key` and `occurred_at`**, for a customer and action, which is why the outbox stores both.
-- **`occurred_at` can't be more than 60 days in the past or 24 hours in the future.** Paddle rejects events outside this window with `usage_event_timestamp_too_old` or `usage_event_future_timestamp`. Retries are rejected once they're more than 60 days old too, but if Paddle accepted an earlier attempt, it still counts.
-- **Each event is its own request during early access (beta).** If customers use a metered feature many times a second, add up usage in your app and send one event for each customer and action per short window, like a minute, with the total `quantity` and an `event_key` for that window. This keeps the worker under the rate limit.
+In the worker, select up to `MAX_BATCH_SIZE` `pending` rows, oldest first, and call `sendUsageEvents()`. Update the rows from the result, and increment `attempts` on retried rows. Repeat until there are no `pending` rows, or `stop` is set. When `stop` is set, end the run and alert if the code isn't `too_many_requests`.
+
+- **Paddle counts an event once for each `event_key` and `occurred_at`**, for a customer and action, which is why the outbox stores both. Resending an event in a different batch is safe, as long as those fields don't change.
+- **`occurred_at` can't be more than 60 days in the past or 24 hours in the future**, measured from when Paddle receives the request. A resend is rejected once an event is more than 60 days old, but if Paddle accepted an earlier attempt, it still counts.
+- **`create()` returns nothing.** There are no per-event results, and `202` means Paddle accepted the batch, not that balances have changed.
+- **Batches can mix customers and actions**, but two events in one batch can't share the same `customer_id`, `action`, `event_key`, and `occurred_at`. The outbox's primary key on `event_key` prevents this.
+- **High-frequency usage.** If customers use a metered feature many times a second, add up usage in your app and write one outbox row for each customer and action per short window, like a minute, with the total `quantity` and an `event_key` for that window. This keeps the outbox small and the worker under the rate limit.
 
 ## Step 6: Gate features on the balance
 
@@ -427,7 +496,7 @@ export async function getRemaining(cache: BalanceCache, customerId: string, unit
 
 Subscribe your notification destination to `usage_balance.depleted`. It's only listed for accounts in early access.
 
-The SDK's `EventName` enum doesn't include this event, so `unmarshal()` returns it as a generic event, with camelCase `data`. Compare the event type as a string before the `webhooks` skill's `switch`. Keep `processEvent`'s `EventEntity` parameter, so the `switch` still narrows the typed events:
+The SDK's `EventName` enum doesn't include this event, even in versions with usage-based billing resources, so `unmarshal()` returns it as a generic event, with camelCase `data`. Compare the event type as a string before the `webhooks` skill's `switch`. Keep `processEvent`'s `EventEntity` parameter, so the `switch` still narrows the typed events:
 
 ```ts
 // utils/paddle/process-webhook.ts
@@ -484,26 +553,29 @@ Not available during early access (beta), so don't build for them: trials, one-t
 
 ## Common pitfalls
 
-- **A typo in `action`.** Paddle accepts events for actions that don't match a meter, but they don't draw down any balance, and there's no error. Keep actions in `usage-config.ts`, and check them against `GET /meters`.
-- **Regenerating `occurred_at` on retry.** Paddle counts the retry as new usage, so the same usage draws down the balance twice. Don't do it to get a `usage_event_timestamp_too_old` rejection accepted either.
-- **Treating `202` as "balance updated."** It means Paddle accepted the event. The drawdown happens shortly after.
+- **A typo in `action`.** Paddle accepts events for actions that don't match a meter, but they don't draw down any balance, and there's no error. Keep actions in `usage-config.ts`, and check them against `paddle.meters.list()`.
+- **Regenerating `occurred_at` or `event_key` on retry.** Paddle counts the retry as new usage, so the same usage draws down the balance twice. Don't do it to get a too-old event accepted either. Generate the key once, when you write the outbox row, not when you send it.
+- **Treating `create()` resolving as "balance updated."** It means Paddle accepted the batch. The drawdown happens shortly after.
+- **Retrying the whole batch after a `400`.** Paddle rejects it again. Fail the events named in `errors[].field` and resend the rest.
 - **Reading allowances through the SDK.** The SDK's `Price` objects don't include `allowances`, so a correct price looks like it has none. Use the API helper.
 
 ## Verify the integration
 
-1. Run the access check from Step 2 and confirm `GET /meters` succeeds.
+1. Run the access check from Step 2 and confirm listing meters succeeds.
 2. In a sandbox account, create a unit, a meter, and a price with an allowance of `"3"`, so it's quick to use up. Complete a checkout with a test card (see `sandbox-testing`).
 3. Confirm the job from Step 4 finds the usage balance, with `remaining.total` of `"3"` and `used.total` of `"0"`.
 4. Record one event with `quantity: "1"`. After a few seconds, confirm `remaining.total` is `"2"`.
 5. Send the same row again, with the same `event_key` and `occurred_at`. Confirm `remaining.total` doesn't change.
 6. Record two more events. Confirm `usage_balance.depleted` arrives at your webhook endpoint and your app applies what you agreed for zero.
 7. Record one more event. Confirm `remaining.total` stays `"0"` and `overage.total` is `"1"`.
+8. Insert a row with an `occurred_at` more than 24 hours in the future alongside a valid one, and run the worker. Confirm the future row is marked `failed` with the message from `errors[]`, and the valid row is sent on the next run.
 
 ## Related docs
 
 - [Set up usage-based billing](https://developer.paddle.com/build/usage-based-billing.md) — the end-to-end tutorial, early access limitations, and the form to apply for access.
 - [Meters](https://developer.paddle.com/api-reference/meters), [Usage balance units](https://developer.paddle.com/api-reference/usage-balance-units), [Usage balances](https://developer.paddle.com/api-reference/usage-balances), and [Usage events](https://developer.paddle.com/api-reference/usage-events) — API reference.
 - [`usage_balance.depleted`](https://developer.paddle.com/webhooks/usage-balances/usage-balance-depleted) — webhook reference.
+- [Paddle Node SDK](https://github.com/PaddleHQ/paddle-node-sdk) — `usageEvents`, `usageBalances`, `meters`, and `usageBalanceUnits` resources, from v3.11.0.
 - [API key permissions](https://developer.paddle.com/api-reference/about/permissions.md)
 - [Rate limiting](https://developer.paddle.com/api-reference/about/rate-limiting.md)
 - [Signature verification](https://developer.paddle.com/webhooks/about/signature-verification.md)
